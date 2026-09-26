@@ -2,7 +2,7 @@
   <main class="p-4 grid grid-cols-12 gap-4 h-[calc(100vh-57px)] min-h-0">
 
     <!-- Left column: pools, pool detail, wallets, stats, simulate, add pool -->
-    <aside v-show="!sidebarCollapsed" class="col-span-3 flex flex-col gap-4 min-h-0 overflow-y-auto trade-tape pr-1">
+    <aside v-show="!expanded" class="col-span-3 flex flex-col gap-4 min-h-0 overflow-y-auto trade-tape pr-1">
       <p v-if="ensLoading" class="text-xs text-gray-400 px-1">Loading watchlist from {{ NAMEFLOW_NAMESPACE }}…</p>
       <p v-else-if="ensError" class="text-[10px] text-accent-amber bg-accent-amber/10 rounded px-2 py-1" role="alert">
         ENS directory unavailable, showing the built-in pool list. {{ ensError }}
@@ -53,15 +53,15 @@
     <AddPoolModal :open="addPoolOpen" :pools="POOLS" @close="addPoolOpen = false" @added="reloadDirectory({ force: true })" />
 
     <!-- Center: visualizations -->
-    <section class="flex flex-col gap-4 min-h-0 overflow-hidden" :class="sidebarCollapsed ? 'col-span-9' : 'col-span-6'">
+    <section class="flex flex-col gap-4 min-h-0 overflow-hidden" :class="expanded ? 'col-span-12' : 'col-span-6'">
       <div class="bg-surface-800 rounded-xl p-4 flex-1 min-h-0 flex flex-col">
         <div class="flex items-center justify-between gap-2 mb-2 shrink-0 flex-wrap">
           <div class="flex items-center gap-2">
             <button
               class="w-6 h-6 rounded-md bg-surface-900 text-gray-500 hover:text-gray-200 text-xs"
-              :title="sidebarCollapsed ? 'Show side panel ([)' : 'Hide side panel for presenting ([)'"
-              @click="toggleSidebar"
-            >{{ sidebarCollapsed ? '»' : '«' }}</button>
+              :title="expanded ? 'Exit full view (f)' : 'Expand the visualization to full view (f)'"
+              @click="toggleExpanded"
+            >{{ expanded ? '⤡' : '⤢' }}</button>
             <div class="flex items-center gap-1 bg-surface-900 rounded-lg p-0.5">
               <button
                 v-for="v in VIEWS"
@@ -127,7 +127,7 @@
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-4 h-52 shrink-0">
+      <div v-show="!expanded" class="grid grid-cols-2 gap-4 h-52 shrink-0">
         <div class="bg-surface-800 rounded-xl p-3 flex flex-col min-h-0">
           <h2 class="text-xs font-medium text-gray-400 mb-1 shrink-0">
             {{ activePool?.address ? `${activePool.name} · ${activePool.quote.symbol} per ${activePool.base.symbol}` : 'Prices' }}
@@ -144,7 +144,7 @@
     </section>
 
     <!-- Right column: live trade tape with replay controls -->
-    <aside class="col-span-3 flex flex-col min-h-0">
+    <aside v-show="!expanded" class="col-span-3 flex flex-col min-h-0">
       <div class="bg-surface-800 rounded-xl p-4 flex-1 overflow-hidden flex flex-col min-h-0">
         <div class="flex items-center justify-between mb-2 shrink-0">
           <h2 class="text-sm font-medium text-gray-400">
@@ -259,20 +259,24 @@ const addPoolOpen = ref(false)
 
 // ---- UI preferences (per browser) --------------------------------------------------------
 
-const sidebarCollapsed = ref(readPref('nameflow.sidebarCollapsed') === '1')
+const expanded = ref(false) // full-view presentation mode, intentionally not persisted
 const timeWindow = ref(readPref('nameflow.timeWindow') || 'all')
 function readPref(key) { try { return localStorage.getItem(key) } catch { return null } }
 function writePref(key, value) { try { localStorage.setItem(key, value) } catch { /* ignore */ } }
-function toggleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value; writePref('nameflow.sidebarCollapsed', sidebarCollapsed.value ? '1' : '0') }
+function toggleExpanded() { expanded.value = !expanded.value }
 function setWindow(id) { timeWindow.value = id; writePref('nameflow.timeWindow', id) }
 function onKey(e) {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
   if (document.querySelector('[role=dialog]')) return // a modal owns the keyboard
-  if (e.key === '[') toggleSidebar()
+  if (e.key === 'f' || e.key === '[') toggleExpanded()
   else if (e.key === '1') view.value = 'network'
   else if (e.key === '2') view.value = 'flow'
   else if (e.key === '3') view.value = 'timeline'
-  else if (e.key === 'Escape') { highlightedTrader.value = ''; if (activePool.value.address) activePool.value = ALL_POOLS }
+  else if (e.key === 'Escape') {
+    if (expanded.value) { expanded.value = false; return }
+    highlightedTrader.value = ''
+    if (activePool.value.address) activePool.value = ALL_POOLS
+  }
 }
 
 // ---- derived swap data --------------------------------------------------------------------

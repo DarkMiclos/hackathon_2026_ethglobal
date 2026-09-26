@@ -101,7 +101,7 @@ If the ENS directory cannot be read at startup, the dashboard falls back to a bu
 - **Volume per pool**, stacked buy/sell, USDC-valued.
 - **Pool card**: live price, liquidity, tick range strip, net token flow, indexing status, top traders.
 - **Replay**: re-run the indexed history through every view with a scrubber and speed control.
-- **Time window** (15m / 1h / 24h / all), collapsible side panel for presenting (`[`), `1`/`2`/`3` switch views, `Esc` clears focus.
+- **Time window** (15m / 1h / 24h / all), full-view toggle for presenting (`f` or `[`, `Esc` to exit), `1`/`2`/`3` switch views, `Esc` clears focus.
 
 ### Swap simulator
 
