@@ -50,7 +50,7 @@ export default async function handler(request) {
     return new Response('Method not allowed', { status: 405 })
   }
   const base = (process.env.MULTIBAAS_URL || '').replace(/\/+$/, '')
-  const key = process.env.MULTIBAAS_API_KEY || ''
+  const key = cleanKey(process.env.MULTIBAAS_API_KEY)
   if (!base || !key) {
     return Response.json({ status: 500, message: 'MULTIBAAS_URL / MULTIBAAS_API_KEY are not configured' }, { status: 500 })
   }
@@ -91,4 +91,9 @@ export default async function handler(request) {
       'Cache-Control': 'no-store',
     },
   })
+}
+
+/** Tolerate the usual paste accidents: quotes, whitespace/newlines, and a "Bearer " prefix. */
+function cleanKey(raw) {
+  return String(raw || '').trim().replace(/^['"]+|['"]+$/g, '').replace(/^Bearer\s+/i, '').trim()
 }

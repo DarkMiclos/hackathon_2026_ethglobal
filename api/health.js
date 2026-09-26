@@ -10,7 +10,7 @@ export const config = { runtime: 'edge' }
 
 export default async function handler() {
   const base = (process.env.MULTIBAAS_URL || '').replace(/\/+$/, '')
-  const key = process.env.MULTIBAAS_API_KEY || ''
+  const key = cleanKey(process.env.MULTIBAAS_API_KEY)
   const proxyConfigured = Boolean(base && key)
 
   let host = null
@@ -36,7 +36,7 @@ export default async function handler() {
       let blockNumber = null
       try { blockNumber = JSON.parse(text)?.result?.blockNumber ?? null } catch { /* not JSON */ }
       upstream = { status: res.status, ok: res.ok, blockNumber }
-      if (res.status === 401 || res.status === 403) hint = 'MultiBaas rejected the API key (check MULTIBAAS_API_KEY)'
+      if (res.status === 401 || res.status === 403) hint = `MultiBaas rejected the API key (${(text.match(/"message":"([^"]*)"/) || [])[1] || res.status}). Re-paste MULTIBAAS_API_KEY as the bare token from the MultiBaas console, then redeploy. Key length seen: ${key.length}`
       else if (res.status === 404) hint = 'MultiBaas returned 404: MULTIBAAS_URL points at the wrong deployment or includes a path'
       else if (!res.ok) hint = `MultiBaas answered ${res.status}`
     } catch (err) {
@@ -55,4 +55,9 @@ export default async function handler() {
     hint,
     time: new Date().toISOString(),
   }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+/** Tolerate the usual paste accidents: quotes, whitespace/newlines, and a "Bearer " prefix. */
+function cleanKey(raw) {
+  return String(raw || '').trim().replace(/^['"]+|['"]+$/g, '').replace(/^Bearer\s+/i, '').trim()
 }
