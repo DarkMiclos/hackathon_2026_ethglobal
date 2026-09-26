@@ -186,9 +186,9 @@ export function useMultiBaas() {
     if (!configured) return demoPoolState(pool)
     try {
       const [slot0, liq, status] = await Promise.all([
-        tracked(contracts.callContractFunction(pool.alias, pool.label, 'slot0', { args: [] })),
-        tracked(contracts.callContractFunction(pool.alias, pool.label, 'liquidity', { args: [] })),
-        withStatus ? tracked(contracts.getEventIndexingStatus(pool.alias, pool.label)).catch(() => null) : null,
+        tracked(contracts.callContractFunction(pool.address, pool.label, 'slot0', { args: [] })),
+        tracked(contracts.callContractFunction(pool.address, pool.label, 'liquidity', { args: [] })),
+        withStatus ? tracked(contracts.getEventIndexingStatus(pool.address, pool.label)).catch(() => null) : null,
       ])
       const s = slot0.data.result?.output || []
       return {

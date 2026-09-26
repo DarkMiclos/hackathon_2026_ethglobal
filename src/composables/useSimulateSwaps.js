@@ -5,6 +5,7 @@ import {
 } from 'viem'
 import { sepolia } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
+import { POOLS } from '@/config/pools'
 
 /**
  * Sepolia swap simulator.
@@ -49,7 +50,7 @@ const ROUTER_ABI = [
   },
 ]
 
-// One round = three swaps per wallet, one per pool. Direction alternates by wallet AND by
+// One round includes each supported pool in the current ENS watchlist. Direction alternates by wallet AND by
 // round so the same wallet trades the other way next time. Across five wallets a round is
 // close to net-neutral for every pool, which keeps the tiny testnet pools from drifting.
 const WETH_SWAP = parseEther('0.001')
@@ -82,16 +83,32 @@ function swapPlan(wallet, round) {
   legs.push(!forward && wallet.uni >= UNI_USDC_SWAP && wallet.allowUni >= MIN_ALLOWANCE
     ? { tokenIn: UNI, tokenOut: USDC, fee: 3000, amountIn: UNI_USDC_SWAP, label: 'UNI→USDC' }
     : { tokenIn: USDC, tokenOut: UNI, fee: 3000, amountIn: USDC_UNI_SWAP, label: 'USDC→UNI' })
-  return legs
+  return supportedPools().map(pool => {
+    const tokens = [pool.token0.address.toLowerCase(), pool.token1.address.toLowerCase()]
+    const leg = legs.find(leg => tokens.includes(leg.tokenIn.toLowerCase()) && tokens.includes(leg.tokenOut.toLowerCase()))
+    return { ...leg, fee: pool.fee, label: `${leg.label} (${pool.fee / 10000}%)` }
+  })
 }
-const SWAPS_PER_WALLET = 3
+
+function supportedPools() {
+  const supported = [WETH, USDC, UNI].map(address => address.toLowerCase())
+  return POOLS.filter(pool => pool.token0.address !== pool.token1.address &&
+    [pool.token0.address, pool.token1.address].every(address => supported.includes(address.toLowerCase())))
+}
+function wethNeeded() {
+  return WETH_SWAP * BigInt(supportedPools().filter(pool => [pool.token0.address, pool.token1.address].some(address => address.toLowerCase() === WETH.toLowerCase())).length)
+}
+function usdcNeeded() {
+  return supportedPools().reduce((total, pool) => {
+    const tokens = [pool.token0.address.toLowerCase(), pool.token1.address.toLowerCase()]
+    return total + (tokens.includes(USDC.toLowerCase()) ? (tokens.includes(WETH.toLowerCase()) ? USDC_SWAP : USDC_UNI_SWAP) : 0n)
+  }, 0n)
+}
 
 // Readiness thresholds (per wallet) and preparation targets.
 const GAS_RESERVE_ETH = parseEther('0.003')   // enough for a round of swaps on Sepolia
 const SUB_WALLET_TARGET_ETH = parseEther('0.02')
-const WETH_NEEDED = WETH_SWAP * 2n            // two WETH legs per round
 const WETH_WRAP_TARGET = parseEther('0.012')  // covers USDC preload + several rounds
-const USDC_NEEDED = USDC_SWAP + USDC_UNI_SWAP
 const USDC_PRELOAD_WETH = parseEther('0.005') // swapped once to seed USDC
 const MIN_ALLOWANCE = parseEther('1')         // treat anything below as "not approved"
 
@@ -132,7 +149,7 @@ export function useSimulateSwaps() {
   const busy = computed(() => ['inspecting', 'preparing', 'swapping'].includes(status.value))
   const readyWallets = computed(() => wallets.value.filter((w) => w.ready))
   const allReady = computed(() => wallets.value.length > 0 && readyWallets.value.length === wallets.value.length)
-  const plannedSwaps = computed(() => readyWallets.value.length * SWAPS_PER_WALLET)
+  const plannedSwaps = computed(() => readyWallets.value.reduce((total, wallet) => total + swapPlan(wallet, currentRound()).length, 0))
 
   /** ETH the main wallet must hold to prepare every wallet that is not ready yet. */
   const requiredMainEth = computed(() => {
@@ -281,6 +298,7 @@ export function useSimulateSwaps() {
 
   /** Broadcast one round of swaps from every ready wallet. Failures are counted, not fatal. */
   async function executeSwaps() {
+    if (busy.value) return
     if (!accounts.length) initWallet()
     if (!accounts.length) return
     status.value = 'swapping'
@@ -295,40 +313,55 @@ export function useSimulateSwaps() {
         status.value = 'error'
         return
       }
-      swapsTotal.value = ready.length * SWAPS_PER_WALLET
       const round = currentRound()
-      addLog(`Round ${round + 1}: broadcasting ${swapsTotal.value} swaps from ${ready.length} wallet(s)…`)
+      const plans = ready.map(wallet => swapPlan(wallet, round))
+      swapsTotal.value = plans.reduce((total, plan) => total + plan.length, 0)
+      if (!swapsTotal.value) {
+        addLog('No supported pools in the watchlist. Add a WETH, USDC, or UNI pair first.', 'error')
+        status.value = 'error'
+        return
+      }
+      const skipped = POOLS.length - supportedPools().length
+      if (skipped) addLog(`${skipped} pool(s) skipped: simulator supports the configured WETH, USDC, and UNI token addresses.`)
+      addLog(`Round ${round + 1}: sequentially executing ${swapsTotal.value} swaps from ${ready.length} wallet(s)…`)
 
-      const nonces = await Promise.all(ready.map((w) => publicClient.getTransactionCount({ address: w.address })))
-      const jobs = []
-      ready.forEach((w, i) => {
+      // Confirm each transaction before estimating the next one against the updated pool state.
+      // Avoid nonce gaps when an RPC rejects a submission and avoid concurrent receipt polling.
+      for (const [i, w] of ready.entries()) {
         const acc = accounts[w.index]
         const wc = walletClientFor(acc)
-        let nonce = nonces[i]
-        for (const cfg of swapPlan(w, round)) {
-          const thisNonce = nonce++
-          jobs.push(
-            wc.writeContract({
-              address: SWAP_ROUTER, abi: ROUTER_ABI, functionName: 'exactInputSingle',
+        for (const cfg of plans[i]) {
+          let hash
+          try {
+            const request = {
+              account: acc, address: SWAP_ROUTER, abi: ROUTER_ABI, functionName: 'exactInputSingle',
               args: [{ tokenIn: cfg.tokenIn, tokenOut: cfg.tokenOut, fee: cfg.fee, recipient: acc.address, amountIn: cfg.amountIn, amountOutMinimum: 0n, sqrtPriceLimitX96: 0n }],
-              nonce: thisNonce,
-            })
-              .then((hash) => {
-                addLog(`${cfg.label} from wallet ${w.index + 1} sent`)
-                return publicClient.waitForTransactionReceipt({ hash })
-              })
-              .then((receipt) => {
-                if (receipt.status === 'success') swapsDone.value++
-                else { swapsFailed.value++; addLog(`${cfg.label} from wallet ${w.index + 1} reverted`, 'error') }
-              })
-              .catch((err) => {
-                swapsFailed.value++
-                addLog(`${cfg.label} from wallet ${w.index + 1}: ${err.shortMessage || err.message}`, 'error')
-              }),
-          )
+            }
+            const { result: amountOut } = await publicClient.simulateContract(request)
+            if (amountOut <= 0n) throw new Error('Swap quote returned no output')
+            request.args[0].amountOutMinimum = amountOut * 99n / 100n
+            const gas = await publicClient.estimateContractGas(request)
+            hash = await wc.writeContract({ ...request, gas: gas * 130n / 100n })
+            addLog(`${cfg.label} from wallet ${w.index + 1} sent: ${hash}`)
+            const receipt = await publicClient.waitForTransactionReceipt({ hash, pollingInterval: 4000, timeout: 120000 })
+            if (receipt.status !== 'success') {
+              swapsFailed.value++
+              addLog(`${cfg.label} from wallet ${w.index + 1} reverted: ${hash}`, 'error')
+            } else {
+              swapsDone.value++
+              addLog(`${cfg.label} from wallet ${w.index + 1} confirmed`)
+            }
+          } catch (err) {
+            if (hash) {
+              // A timeout is not a failed transaction. Stop instead of submitting duplicates.
+              addLog(`Confirmation unknown for ${hash}. Round stopped; check the transaction before retrying.`, 'error')
+              throw err
+            }
+            swapsFailed.value++
+            addLog(`${cfg.label} from wallet ${w.index + 1}: ${err.shortMessage || err.message}`, 'error')
+          }
         }
-      })
-      await Promise.all(jobs)
+      }
       bumpRound()
       addLog(swapsFailed.value ? `${swapsDone.value} confirmed, ${swapsFailed.value} failed` : `All ${swapsDone.value} swaps confirmed`)
       status.value = swapsFailed.value ? 'error' : 'idle'
@@ -356,13 +389,13 @@ function emptyWallet(index, address) {
 function describeWallet(index, address, eth, weth, usdc, allowWeth, allowUsdc, uni, allowUni) {
   const needs = []
   if (eth < GAS_RESERVE_ETH) needs.push('eth')
-  if (weth < WETH_NEEDED) needs.push('weth')
+  if (weth < wethNeeded()) needs.push('weth')
   if (allowWeth < MIN_ALLOWANCE) needs.push('approve-weth')
   if (allowUsdc < MIN_ALLOWANCE) needs.push('approve-usdc')
   if (allowUni < MIN_ALLOWANCE) needs.push('approve-uni')
-  if (usdc < USDC_NEEDED) needs.push('usdc')
+  if (usdc < usdcNeeded()) needs.push('usdc')
   // seeding USDC costs WETH, so a wallet that needs USDC must also hold WETH for it
-  if (needs.includes('usdc') && !needs.includes('weth') && weth < USDC_PRELOAD_WETH + WETH_NEEDED) needs.push('weth')
+  if (needs.includes('usdc') && !needs.includes('weth') && weth < USDC_PRELOAD_WETH + wethNeeded()) needs.push('weth')
   return { index, address, eth, weth, usdc, uni, allowWeth, allowUsdc, allowUni, needs, ready: needs.length === 0, inspected: true }
 }
 

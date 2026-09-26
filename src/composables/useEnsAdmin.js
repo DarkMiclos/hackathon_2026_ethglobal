@@ -129,8 +129,8 @@ export function useEnsAdmin() {
       const stable = [token0, token1].find((t) => /USD|DAI/i.test(t.symbol))
       const quote = stable || [token0, token1].find((t) => t.symbol === 'WETH') || token1
       const base = quote === token0 ? token1 : token0
-      const label = `${base.symbol}-${quote.symbol}`.toLowerCase().replace(/[^a-z0-9-]/g, '')
-      const alias = `${label.replace(/-/g, '')}pool1`
+      const label = `${base.symbol}-${quote.symbol}-${fee}`.toLowerCase().replace(/[^a-z0-9-]/g, '')
+      const alias = `pool${address.toLowerCase().slice(2)}`
       draft.value = {
         address: address.toLowerCase(),
         ensName: `${label}.${NAMEFLOW_NAMESPACE}`,
@@ -247,7 +247,7 @@ export function useEnsAdmin() {
     try {
       const cfg = new Configuration({ basePath: `${window.location.origin}/multibaas-api/api/v0`, accessToken: key })
       await new AddressesApi(cfg).setAddress({ alias: d.alias, address: getAddress(d.address) })
-      await new ContractsApi(cfg).linkAddressContract(d.alias, { label: d.mbLabel })
+      await new ContractsApi(cfg).linkAddressContract(d.address, { label: d.mbLabel, startingBlock: '-1000' })
       log(`MultiBaas: linked ${d.alias} → ${d.mbLabel}; Swap events will index from here on`)
     } catch (err) {
       log(`MultiBaas link needs an admin key (${err?.response?.status || err.message}); add alias "${d.alias}" in the console`, 'error')
