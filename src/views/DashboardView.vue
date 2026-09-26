@@ -50,7 +50,7 @@
       <SimulatePanel @executed="onSwapsExecuted" />
     </aside>
 
-    <AddPoolModal :open="addPoolOpen" :pools="POOLS" @close="addPoolOpen = false" @added="reloadDirectory" />
+    <AddPoolModal :open="addPoolOpen" :pools="POOLS" @close="addPoolOpen = false" @added="reloadDirectory({ force: true })" />
 
     <!-- Center: visualizations -->
     <section class="flex flex-col gap-4 min-h-0 overflow-hidden" :class="sidebarCollapsed ? 'col-span-9' : 'col-span-6'">
@@ -398,21 +398,66 @@ function tickReplay() {
 
 // ---- ENS directory -------------------------------------------------------------------------
 
-async function reloadDirectory() {
+// The parsed directory is cached per browser for ten minutes: the dashboard paints from the
+// cache instantly and revalidates against ENS in the background, so a reload costs no RPC
+// calls up front and a throttled RPC never blanks the watchlist.
+const DIR_CACHE_KEY = 'nameflow.ens.directory'
+const DIR_CACHE_TTL = 10 * 60 * 1000
+
+function readDirectoryCache() {
+  try {
+    const raw = localStorage.getItem(DIR_CACHE_KEY)
+    if (!raw) return null
+    const cached = JSON.parse(raw)
+    if (!cached?.at || Date.now() - cached.at > DIR_CACHE_TTL || !Array.isArray(cached.pools)) return null
+    // JSON lost object identity: base/quote must be the same objects as token0/token1.
+    const pools = cached.pools.map((p) => ({
+      ...p,
+      base: p.base.address === p.token0.address ? p.token0 : p.token1,
+      quote: p.quote.address === p.token0.address ? p.token0 : p.token1,
+    }))
+    for (const p of pools) identityNames[p.address] = p.ensName
+    for (const w of cached.wallets || []) identityNames[w.address.toLowerCase()] = w.ensName
+    return { pools, wallets: cached.wallets || [] }
+  } catch {
+    return null
+  }
+}
+
+function writeDirectoryCache(directory) {
+  try {
+    localStorage.setItem(DIR_CACHE_KEY, JSON.stringify({ at: Date.now(), pools: directory.pools, wallets: directory.wallets }))
+  } catch { /* storage unavailable */ }
+}
+
+async function reloadDirectory({ force = false } = {}) {
+  const cached = force ? null : readDirectoryCache()
+  if (cached && !POOLS.length) {
+    setPools(cached.pools)
+    wallets.value = cached.wallets
+    ensLoading.value = false
+    refreshDerived(POOLS)
+  }
   ensLoading.value = POOLS.length === 0
   ensError.value = ''
   try {
     const directory = await withTimeout(loadDirectory(), 25000, 'ENS read timed out')
+    writeDirectoryCache(directory)
+    const changed = JSON.stringify(directory.pools.map((p) => p.address)) !== JSON.stringify([...POOLS].map((p) => p.address))
     setPools(directory.pools)
     wallets.value = directory.wallets
+    if (changed || !cached) await refreshDerived(POOLS)
   } catch (err) {
-    ensError.value = err.message
-    if (!POOLS.length) setPools(FALLBACK_POOLS)
+    if (!POOLS.length) {
+      ensError.value = err.message
+      setPools(FALLBACK_POOLS)
+      await refreshDerived(POOLS)
+    } else {
+      console.warn('ENS directory revalidation failed, keeping the current watchlist:', err.message)
+    }
   } finally {
     ensLoading.value = false
   }
-  // Pools may have just appeared or changed: fetch their live state once.
-  await refreshDerived(POOLS)
 }
 
 function withTimeout(promise, ms, message) {

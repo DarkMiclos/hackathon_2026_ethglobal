@@ -1,10 +1,13 @@
-import { createPublicClient, getAddress, http, isAddress, parseAbi } from 'viem'
+import { createPublicClient, getAddress, isAddress, parseAbi } from 'viem'
 import { sepolia } from 'viem/chains'
 import { normalize } from 'viem/ens'
 import { reactive } from 'vue'
 import { NAMEFLOW_NAMESPACE, DIRECTORY_KEY, POOL_METADATA_KEY, LOOKUP_KEY } from '@/config/ens'
+import { sepoliaTransport, clientBatch } from '@/config/rpc'
 
-const client = createPublicClient({ chain: sepolia, transport: http(import.meta.env.VITE_SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com', { timeout: 10000, retryCount: 2, retryDelay: 500 }) })
+// Fallback across several RPCs and multicall batching: a directory load or a trader lookup
+// costs a couple of HTTP requests instead of dozens, which keeps public RPCs from returning 429.
+const client = createPublicClient({ chain: sepolia, ...clientBatch, transport: sepoliaTransport() })
 const cache = new Map()
 const pending = new Map()
 export const identityNames = reactive({})

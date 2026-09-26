@@ -182,7 +182,9 @@ Or use **+ Add pool** in the UI with the owner wallet connected in MetaMask (Sep
 
 ### Deploy to Vercel
 
-Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) in the Vercel project. Production builds call MultiBaas through `api/multibaas/[...path].js`, which forwards only the read endpoints, injects the key, and refuses requests from other origins. `vercel.json` rewrites non-API paths to `index.html` for the router. To call MultiBaas directly instead, set `VITE_MULTIBAAS_PROXY=false`, ship the `VITE_MULTIBAAS_*` variables, and add the site origin under MultiBaas Admin → CORS.
+Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) and `VITE_SEPOLIA_RPC_URL` (a dedicated Sepolia RPC; the public ones rate-limit) in the Vercel project, then redeploy (environment variables only apply to builds made after they are set). Production builds call MultiBaas through `api/multibaas/[...path].js`, which forwards only the read endpoints, injects the key, and refuses requests from other origins. `vercel.json` rewrites non-API paths to `index.html` for the router.
+
+Check the deployment with `https://<your-site>/api/health`. It must return JSON with `"proxyConfigured": true`. If it returns Vercel's `NOT_FOUND` page, the `api/` directory is not being built as functions: confirm the project's **Root Directory** is the repository root, the **Framework Preset** is Vite, and no legacy `builds` override is configured. While the function is missing, the app automatically falls back to calling MultiBaas directly **if** `VITE_MULTIBAAS_URL` and `VITE_MULTIBAAS_API_KEY` are set for the build and the site origin is registered under MultiBaas Admin → CORS. Only do that with a **read-only** key: anything shipped in a `VITE_` variable is visible to every visitor.
 
 ---
 

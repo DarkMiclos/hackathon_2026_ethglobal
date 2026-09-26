@@ -38,21 +38,48 @@ const API_KEY = import.meta.env.VITE_MULTIBAAS_API_KEY || ''
 const USE_PROXY = import.meta.env.DEV
   ? false
   : (import.meta.env.VITE_MULTIBAAS_PROXY ?? 'true') !== 'false'
-const BASE_PATH = import.meta.env.DEV
+const PROXY_PATH = import.meta.env.DEV
   ? `${window.location.origin}/multibaas-api/api/v0`
-  : USE_PROXY
-    ? `${window.location.origin}/api/multibaas/api/v0`
-    : `${MULTIBAAS_URL_RAW}/api/v0`
+  : `${window.location.origin}/api/multibaas/api/v0`
+const DIRECT_PATH = `${MULTIBAAS_URL_RAW}/api/v0`
 
 const SWAP_SIGNATURE = 'Swap(address,address,int256,int256,uint160,uint128,int24)'
 const PAGE_SIZE = 50   // MultiBaas rejects event query pages larger than this
 const MAX_ROWS = 200   // rows kept in memory / drawn
-const configured = USE_PROXY || Boolean(MULTIBAAS_URL_RAW && API_KEY)
+const canDirect = Boolean(MULTIBAAS_URL_RAW && API_KEY)
+const configured = USE_PROXY || canDirect
 
-const config = new Configuration({ basePath: BASE_PATH, accessToken: USE_PROXY ? undefined : API_KEY })
-const eventQueries = new EventQueriesApi(config)
-const contracts = new ContractsApi(config)
-const chains = new ChainsApi(config)
+// The SDK clients are rebuilt if the proxy turns out to be missing (a 404 from the platform
+// rather than from MultiBaas) and the bundle also carries direct credentials.
+// In dev the Vite proxy is always used (it forwards the key the client sends).
+let mode = USE_PROXY || import.meta.env.DEV ? 'proxy' : 'direct'
+let apis = makeApis(mode)
+function makeApis(m) {
+  const cfg = new Configuration({
+    basePath: m === 'proxy' ? PROXY_PATH : DIRECT_PATH,
+    accessToken: m === 'proxy' && !import.meta.env.DEV ? undefined : API_KEY,
+  })
+  return { eventQueries: new EventQueriesApi(cfg), contracts: new ContractsApi(cfg), chains: new ChainsApi(cfg) }
+}
+async function call(fn) {
+  try {
+    return await fn(apis)
+  } catch (err) {
+    const status = err?.response?.status
+    const platform404 = status === 404 && typeof err?.response?.data === 'string'
+    if (mode === 'proxy' && platform404 && canDirect) {
+      console.warn('MultiBaas proxy is not deployed; calling the deployment directly (add the site origin under MultiBaas Admin > CORS).')
+      mode = 'direct'
+      apis = makeApis('direct')
+      return fn(apis)
+    }
+    throw err
+  }
+}
+const wrap = (api, methods) => Object.fromEntries(methods.map((m) => [m, (...args) => call((a) => a[api][m](...args))]))
+const eventQueries = wrap('eventQueries', ['executeEventQuery', 'countEventQueryRecords', 'executeArbitraryEventQuery'])
+const contracts = wrap('contracts', ['callContractFunction', 'getEventIndexingStatus'])
+const chains = wrap('chains', ['getChainStatus'])
 
 // Shared reactive state (module-level so every consumer sees the same values)
 const isLive = ref(false)

@@ -42,7 +42,7 @@ function harness({ rejectFirst = false, timeout = false } = {}) {
     .map(([a,b,fee]) => ({ token0: {address:a}, token1: {address:b}, fee }))
   const bindings = { ref, computed, parseEther, formatEther, formatUnits, keccak256, encodePacked,
     privateKeyToAccount, POOLS:pools, sepolia:{}, http:()=>null,
-    createPublicClient:()=>client, createWalletClient:()=>wallet,
+    createPublicClient:()=>client, createWalletClient:()=>wallet, sepoliaTransport:()=>null, clientBatch:{},
     env:{VITE_TEST_PRIVATE_KEY:'1'.repeat(64)}, localStorage:{getItem:()=>null,setItem:()=>{}} }
   const sim = new Function(...Object.keys(bindings), `${source}\nreturn useSimulateSwaps()`)(...Object.values(bindings))
   return { sim, requests }

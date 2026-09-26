@@ -1,11 +1,12 @@
 import { ref, computed } from 'vue'
 import {
-  createWalletClient, createPublicClient, http,
+  createWalletClient, createPublicClient,
   parseEther, formatEther, formatUnits, keccak256, encodePacked,
 } from 'viem'
 import { sepolia } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 import { POOLS } from '@/config/pools'
+import { sepoliaTransport, clientBatch } from '@/config/rpc'
 
 /**
  * Sepolia swap simulator.
@@ -112,11 +113,10 @@ const WETH_WRAP_TARGET = parseEther('0.012')  // covers USDC preload + several r
 const USDC_PRELOAD_WETH = parseEther('0.005') // swapped once to seed USDC
 const MIN_ALLOWANCE = parseEther('1')         // treat anything below as "not approved"
 
-const SEPOLIA_RPC = import.meta.env.VITE_SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
 const TEST_PK = normalizeKey(import.meta.env.VITE_TEST_PRIVATE_KEY || '')
 const WALLET_COUNT = 5
 
-const publicClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) })
+const publicClient = createPublicClient({ chain: sepolia, ...clientBatch, transport: sepoliaTransport() })
 
 function normalizeKey(pk) {
   const trimmed = pk.trim()
@@ -131,7 +131,7 @@ function derivePrivateKey(masterPk, index) {
 }
 
 function walletClientFor(account) {
-  return createWalletClient({ account, chain: sepolia, transport: http(SEPOLIA_RPC) })
+  return createWalletClient({ account, chain: sepolia, transport: sepoliaTransport() })
 }
 
 // Module-level so the panel and the dashboard share one simulator state.

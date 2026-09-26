@@ -1,12 +1,13 @@
 import { ref, computed } from 'vue'
 import {
-  createPublicClient, createWalletClient, custom, http, parseAbi, toHex, keccak256,
+  createPublicClient, createWalletClient, custom, parseAbi, toHex, keccak256,
   zeroAddress, encodeFunctionData, getAddress, isAddress,
 } from 'viem'
 import { packetToBytes, normalize } from 'viem/ens'
 import { sepolia } from 'viem/chains'
 import { AddressesApi, ContractsApi, Configuration } from '@curvegrid/multibaas-sdk'
 import { NAMEFLOW_NAMESPACE, DIRECTORY_KEY, POOL_METADATA_KEY } from '@/config/ens'
+import { sepoliaTransport, clientBatch } from '@/config/rpc'
 
 /**
  * ENSv2 write path for the pool watchlist, driven by the user's browser wallet.
@@ -21,7 +22,6 @@ import { NAMEFLOW_NAMESPACE, DIRECTORY_KEY, POOL_METADATA_KEY } from '@/config/e
  * ENSv2 access control. Every write is simulated first, so a wallet never signs a reverting tx.
  */
 
-const RPC = import.meta.env.VITE_SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
 const HELPER = '0x33f571aa8a160a21b877cf6e0fb8806692b97df5'
 const UNIVERSAL_RESOLVER = sepolia.contracts.ensUniversalResolver.address
 
@@ -63,7 +63,7 @@ const labelId = (label) => BigInt(keccak256(toHex(label)))
 const TOKEN_COLORS = { WETH: '#3b82f6', USDC: '#10b981', UNI: '#ec4899', DAI: '#f59e0b', WBTC: '#f97316', LINK: '#2563eb' }
 const POOL_COLORS = ['#06b6d4', '#8b5cf6', '#f59e0b', '#22c55e', '#ef4444', '#eab308', '#14b8a6', '#a855f7']
 
-const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC, { timeout: 15000, retryCount: 2 }) })
+const publicClient = createPublicClient({ chain: sepolia, ...clientBatch, transport: sepoliaTransport() })
 
 const account = ref('')
 const isOwner = ref(false)
