@@ -17,7 +17,8 @@
       >
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-2 min-w-0">
-            <span class="w-2 h-2 rounded-full shrink-0" :style="{ background: row.pool?.color || '#64748b' }" />
+            <img v-if="poolIcon(row.pool)" :src="poolIcon(row.pool)" :alt="`${row.pool.name} icon`" class="w-6 h-6 rounded-full shrink-0" />
+            <span v-else class="w-2 h-2 rounded-full shrink-0" :style="{ background: row.pool?.color || '#64748b' }" />
             <span class="font-medium text-gray-300 truncate">{{ row.pool?.name || 'Unknown pool' }}</span>
           </div>
           <span
@@ -33,7 +34,7 @@
         </div>
 
         <div class="mt-1 flex items-center justify-between text-[10px] text-gray-500">
-          <span class="font-mono">{{ truncateAddr(row.trader) }}</span>
+          <span class="font-mono">{{ row.traderName || truncateAddr(row.trader) }}</span>
           <span class="flex items-center gap-2">
             <span v-if="row.valueUsdc" class="text-gray-400">≈ {{ formatAmount(row.valueUsdc, 0) }} USDC</span>
             <span>{{ row.timeAgo }}</span>
@@ -53,6 +54,7 @@
 </template>
 
 <script setup>
+import { poolIcon } from '@/utils/poolIcon'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { formatAmount, truncateAddr } from '@/config/pools'
 

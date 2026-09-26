@@ -18,7 +18,7 @@
       <div class="space-y-1">
         <label class="text-xs text-gray-500">Main Wallet</label>
         <div class="flex items-center gap-1">
-          <code class="text-xs text-gray-300 bg-surface-900 px-2 py-1 rounded flex-1 truncate">{{ wallets[0]?.address || 'no VITE_TEST_PRIVATE_KEY' }}</code>
+          <code class="text-xs text-gray-300 bg-surface-900 px-2 py-1 rounded flex-1 truncate">{{ identityNames[wallets[0]?.address?.toLowerCase()] || wallets[0]?.address || 'no VITE_TEST_PRIVATE_KEY' }}</code>
           <button class="text-xs text-blue-400 hover:text-blue-300 shrink-0" @click="copyAddress(0)">Copy</button>
         </div>
         <div class="flex items-center justify-between text-xs">
@@ -34,7 +34,7 @@
         </button>
         <div v-if="showSubWallets" class="space-y-1 pl-2 border-l border-surface-700">
           <div v-for="(w, i) in wallets.slice(1)" :key="w.address" class="flex items-center gap-1">
-            <code class="text-[10px] text-gray-400 bg-surface-900 px-1.5 py-0.5 rounded truncate flex-1">{{ w.address }}</code>
+            <code class="text-[10px] text-gray-400 bg-surface-900 px-1.5 py-0.5 rounded truncate flex-1">{{ identityNames[w.address.toLowerCase()] || w.address }}</code>
             <span class="text-[10px] text-gray-500 shrink-0">{{ w.balance || '...' }} Ξ</span>
           </div>
         </div>
@@ -96,6 +96,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useSimulateSwaps } from '@/composables/useSimulateSwaps'
+import { identityNames } from '@/composables/useEns'
 
 const emit = defineEmits(['executed'])
 

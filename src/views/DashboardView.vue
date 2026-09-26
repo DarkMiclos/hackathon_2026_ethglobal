@@ -3,6 +3,8 @@
 
     <!-- Left column: pools, stats, pool detail, simulate -->
     <aside class="col-span-3 flex flex-col gap-4 min-h-0 overflow-y-auto trade-tape pr-1">
+      <p v-if="ensLoading" class="text-xs text-gray-400">Loading pools from ENS…</p>
+      <p v-if="ensError" class="text-xs text-red-400" role="alert">{{ ensError }}</p>
       <PoolSelector
         :pools="pools"
         :active-pool="activePool"
@@ -18,6 +20,10 @@
         :highlighted-trader="highlightedTrader"
         @select-trader="toggleTrader"
       />
+      <div v-if="wallets.length" class="bg-surface-800 rounded-xl p-4">
+        <h2 class="text-sm text-gray-400 mb-2">Wallets</h2>
+        <a v-for="wallet in wallets" :key="wallet.ensName" :href="`https://sepolia.etherscan.io/address/${wallet.address}`" target="_blank" rel="noopener" class="block text-xs text-gray-300 py-1 break-all">{{ wallet.ensName }}</a>
+      </div>
       <StatsCard :stats="stats" :swaps="filteredSwaps" />
       <SimulatePanel @executed="onSwapsExecuted" />
     </aside>
@@ -118,8 +124,9 @@
 
 <script setup>
 import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
+import { useEns, identityNames } from '@/composables/useEns'
 import { useMultiBaas } from '@/composables/useMultiBaas'
-import { POOLS, ALL_POOLS, enrichSwap, swapValueUsdc, decodePrice, truncateAddr } from '@/config/pools'
+import { POOLS, setPools, ALL_POOLS, enrichSwap, swapValueUsdc, decodePrice, truncateAddr } from '@/config/pools'
 import PoolSelector from '@/components/PoolSelector.vue'
 import StatsCard from '@/components/StatsCard.vue'
 import PoolDetail from '@/components/PoolDetail.vue'
@@ -143,7 +150,12 @@ const rawSwaps = ref([])
 const poolStates = ref({})     // address -> slot0/liquidity/indexing state
 const aggregates = ref({})     // address -> MultiBaas aggregated row
 // Pool metadata stays non-reactive so identity comparisons against enriched swaps keep working.
-const pools = [ALL_POOLS, ...POOLS]
+const pools = computed(() => [ALL_POOLS, ...POOLS])
+const wallets = ref([])
+const ensLoading = ref(true)
+const ensError = ref('')
+const { loadDirectory, resolveAddress } = useEns()
+const traderLookups = new Set()
 const activePool = shallowRef(ALL_POOLS)
 const highlightedTrader = ref('')
 const view = ref('network')
@@ -151,7 +163,8 @@ const newSwapIds = ref([])
 
 // Latest ETH price in USDC: slot0 of the WETH/USDC pool, else the last indexed swap there.
 const ethUsdc = computed(() => {
-  const pool = POOLS[0]
+  const pool = POOLS.find(p => p.base.symbol === 'WETH' && p.quote.symbol === 'USDC')
+  if (!pool) return 0
   const live = decodePrice(poolStates.value[pool.address]?.sqrtPriceX96, pool)
   if (live) return live
   const last = [...rawSwaps.value].reverse().find((s) => s.contractAddress === pool.address)
@@ -162,7 +175,7 @@ const allSwaps = computed(() =>
   rawSwaps.value
     .map(enrichSwap)
     .filter((s) => s.pool)
-    .map((s) => ({ ...s, valueUsdc: swapValueUsdc(s, ethUsdc.value) })),
+    .map((s) => ({ ...s, traderName: identityNames[s.trader], valueUsdc: swapValueUsdc(s, ethUsdc.value) })),
 )
 
 const filteredSwaps = computed(() => {
@@ -214,6 +227,12 @@ async function loadSwaps() {
   firstLoad = false
   newSwapIds.value = fresh
   rawSwaps.value = next
+  const addresses = [...new Set(next.map(s => (s.recipient || s.txFrom || '').toLowerCase()).filter(Boolean))]
+  for (const address of addresses) {
+    if (traderLookups.has(address) || identityNames[address]) continue
+    traderLookups.add(address)
+    resolveAddress(address).catch(() => {}).finally(() => traderLookups.delete(address))
+  }
   if (fresh.length) {
     // refresh live pool state right away so the price line follows the new swaps
     loadPoolStates()
@@ -239,6 +258,16 @@ function startPolling(swapMs = SWAP_POLL_MS) {
 }
 
 onMounted(async () => {
+  try {
+    const directory = await loadDirectory()
+    setPools(directory.pools)
+    wallets.value = directory.wallets
+  } catch (error) {
+    ensError.value = error.message
+    ensLoading.value = false
+    return
+  }
+  ensLoading.value = false
   await Promise.all([loadSwaps(), loadPoolStates()])
   startPolling()
   stateTimer = setInterval(loadPoolStates, STATE_POLL_MS)

@@ -1,63 +1,13 @@
-/**
- * Token + pool metadata for the three Uniswap V3 pools indexed by MultiBaas on Sepolia.
- *
- * token0 / token1 ordering was read on-chain through the MultiBaas contract-call API
- * (POST /chains/ethereum/addresses/{alias}/contracts/{label}/methods/token0).
- * `alias` and `label` are the MultiBaas address alias and contract label, used for
- * contract calls and indexing-status lookups.
- */
+import { shallowReactive } from 'vue'
 
-export const TOKENS = {
-  WETH: { symbol: 'WETH', address: '0xfff9976782d46cc05630d1f6ebab18b2324d6b14', decimals: 18, color: '#3b82f6' },
-  USDC: { symbol: 'USDC', address: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238', decimals: 6,  color: '#10b981' },
-  UNI:  { symbol: 'UNI',  address: '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', decimals: 18, color: '#ec4899' },
-}
-
-export const POOLS = [
-  {
-    name: 'WETH / USDC',
-    address: '0x6ce0896eae6d4bd668fde41bb784548fb8f59b50',
-    alias: 'wethusdcpool1',
-    label: 'wethusdcpool',
-    fee: 3000,
-    token0: TOKENS.USDC,
-    token1: TOKENS.WETH,
-    base: TOKENS.WETH,   // the asset being priced
-    quote: TOKENS.USDC,  // the unit it is priced in
-    color: '#06b6d4',
-  },
-  {
-    name: 'WETH / UNI',
-    address: '0x287b0e934ed0439e2a7b1d5f0fc25ea2c24b64f7',
-    alias: 'wethunipool1',
-    label: 'wethunipool',
-    fee: 3000,
-    token0: TOKENS.UNI,
-    token1: TOKENS.WETH,
-    base: TOKENS.UNI,
-    quote: TOKENS.WETH,
-    color: '#8b5cf6',
-  },
-  {
-    name: 'USDC / UNI',
-    address: '0x349492f65c8b27efef83456189b85d0fa32afccd',
-    alias: 'usdcuni3pool1',
-    label: 'usdcuni3pool',
-    fee: 3000,
-    token0: TOKENS.USDC,
-    token1: TOKENS.UNI,
-    base: TOKENS.UNI,
-    quote: TOKENS.USDC,
-    color: '#f59e0b',
-  },
-]
+// Pool definitions are loaded from ENS at startup; objects retain token identity.
+export const POOLS = shallowReactive([])
+export function setPools(pools) { POOLS.splice(0, POOLS.length, ...pools) }
 
 export const ALL_POOLS = { name: 'All Pools', address: '', fee: 0, color: '#94a3b8' }
 
-const poolByAddress = new Map(POOLS.map((p) => [p.address, p]))
-
 export function getPool(address) {
-  return poolByAddress.get((address || '').toLowerCase()) || null
+  return POOLS.find(p => p.address === (address || '').toLowerCase()) || null
 }
 
 /**
@@ -119,12 +69,12 @@ export function enrichSwap(swap) {
 export function swapValueUsdc(swap, ethUsdc) {
   if (!swap.pool) return 0
   const { pool } = swap
-  if (pool.quote === TOKENS.USDC) return swap.quoteAmount
-  if (pool.token0 === TOKENS.USDC || pool.token1 === TOKENS.USDC) {
-    return Math.abs(pool.token0 === TOKENS.USDC ? swap.amount0 / 1e6 : swap.amount1 / 1e6)
+  if (pool.quote.symbol === 'USDC') return swap.quoteAmount
+  if (pool.token0.symbol === 'USDC' || pool.token1.symbol === 'USDC') {
+    return Math.abs(pool.token0.symbol === 'USDC' ? swap.amount0 / 1e6 : swap.amount1 / 1e6)
   }
   // WETH / UNI: value the WETH leg
-  const wethAmount = pool.token1 === TOKENS.WETH
+  const wethAmount = pool.token1.symbol === 'WETH'
     ? Math.abs(Number(swap.amount1) / 1e18)
     : Math.abs(Number(swap.amount0) / 1e18)
   return wethAmount * (ethUsdc || 0)

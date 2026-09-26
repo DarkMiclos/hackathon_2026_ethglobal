@@ -19,6 +19,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as d3 from 'd3'
+import { poolIcon } from '@/utils/poolIcon'
 import { formatAmount, truncateAddr } from '@/config/pools'
 
 const props = defineProps({
@@ -148,7 +149,7 @@ function updateGraph() {
       poolMap.set(poolId, { id: poolId, type: 'pool', pool: s.pool, label: s.pool.name, volume: 0, buyVol: 0, sellVol: 0, count: 0 })
     }
     if (!walletMap.has(s.trader)) {
-      walletMap.set(s.trader, { id: s.trader, type: 'wallet', label: truncateAddr(s.trader), volume: 0, count: 0, pools: new Set() })
+      walletMap.set(s.trader, { id: s.trader, type: 'wallet', label: s.traderName || truncateAddr(s.trader), volume: 0, count: 0, pools: new Set() })
     }
     const p = poolMap.get(poolId)
     const t = walletMap.get(s.trader)
@@ -242,6 +243,7 @@ function updateGraph() {
   nodeEnter.append('circle').attr('class', 'main')
   nodeEnter.append('path').attr('class', 'pie-buy')
   nodeEnter.append('path').attr('class', 'pie-sell')
+  nodeEnter.append('image').attr('class', 'pool-icon').attr('preserveAspectRatio', 'xMidYMid slice').attr('pointer-events', 'none')
   nodeEnter.append('text').attr('class', 'label').attr('text-anchor', 'middle').attr('pointer-events', 'none')
   nodeEnter.append('text').attr('class', 'sub').attr('text-anchor', 'middle').attr('pointer-events', 'none')
   nodeEnter.transition().duration(400).attr('opacity', 1)
@@ -266,17 +268,24 @@ function updateGraph() {
   nodeSel.select('.pie-buy')
     .attr('fill', BUY).attr('opacity', 0.75)
     .attr('d', (d) => {
-      if (d.type !== 'pool' || !d.volume) return null
+      if (d.type !== 'pool' || !d.volume || poolIcon(d.pool)) return null
       const r = d.r * 0.72
       return arc({ innerRadius: r * 0.45, outerRadius: r, startAngle: 0, endAngle: (d.buyVol / d.volume) * Math.PI * 2 })
     })
   nodeSel.select('.pie-sell')
     .attr('fill', SELL).attr('opacity', 0.75)
     .attr('d', (d) => {
-      if (d.type !== 'pool' || !d.volume) return null
+      if (d.type !== 'pool' || !d.volume || poolIcon(d.pool)) return null
       const r = d.r * 0.72
       return arc({ innerRadius: r * 0.45, outerRadius: r, startAngle: (d.buyVol / d.volume) * Math.PI * 2, endAngle: Math.PI * 2 })
     })
+
+  nodeSel.select('.pool-icon')
+    .attr('href', d => d.type === 'pool' ? poolIcon(d.pool) : null)
+    .attr('display', d => d.type === 'pool' && poolIcon(d.pool) ? null : 'none')
+    .attr('x', d => -d.r).attr('y', d => -d.r)
+    .attr('width', d => d.r * 2).attr('height', d => d.r * 2)
+    .style('clip-path', 'circle(50%)')
 
   nodeSel.select('.label')
     .text((d) => d.label)

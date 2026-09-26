@@ -10,6 +10,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as d3 from 'd3'
+import { poolIcon } from '@/utils/poolIcon'
 import { POOLS, decodePrice, formatAmount } from '@/config/pools'
 
 const props = defineProps({
@@ -188,7 +189,11 @@ function drawSmallMultiples(svg, width, height) {
     }
 
     // label
-    g.append('circle').attr('cx', 10).attr('cy', rowH / 2).attr('r', 3.5).attr('fill', pool.color)
+    if (poolIcon(pool)) {
+      g.append('image').attr('href', poolIcon(pool)).attr('x', 0).attr('y', rowH / 2 - 10).attr('width', 20).attr('height', 20).style('clip-path', 'circle(50%)')
+    } else {
+      g.append('circle').attr('cx', 10).attr('cy', rowH / 2).attr('r', 3.5).attr('fill', pool.color)
+    }
     g.append('text').attr('x', 18).attr('y', rowH / 2 - 2).attr('fill', '#cbd5e1').attr('font-size', '10px').attr('font-weight', 600).text(pool.name)
     g.append('text').attr('x', 18).attr('y', rowH / 2 + 9).attr('fill', '#64748b').attr('font-size', '8px')
       .text(`${pool.quote.symbol} per ${pool.base.symbol} · ${data.length} swaps`)

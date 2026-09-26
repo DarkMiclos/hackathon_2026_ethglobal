@@ -116,7 +116,7 @@ function draw() {
         .html(
           `<div style="color:${s.side === 'buy' ? BUY : SELL}" class="font-semibold">${s.side.toUpperCase()} ${s.pool.base.symbol} · ${s.pool.name}</div>` +
           `<div>${formatAmount(s.amountIn)} ${s.tokenIn.symbol} → ${formatAmount(s.amountOut)} ${s.tokenOut.symbol}</div>` +
-          `<div class="text-gray-400">${truncateAddr(s.trader)} · ${d3.timeFormat('%H:%M:%S')(s.timestamp * 1000)} · block ${s.blockNumber}</div>`,
+          `<div class="text-gray-400">${s.traderName || truncateAddr(s.trader)} · ${d3.timeFormat('%H:%M:%S')(s.timestamp * 1000)} · block ${s.blockNumber}</div>`,
         )
     })
     .on('mouseleave', () => tip.classed('hidden', true))

@@ -11,7 +11,7 @@ A real-time Uniswap V3 swap dashboard built for **ETHGlobal Tokyo 2026**, powere
 - **Pool focus**: click any pool (selector, graph node, volume bar, timeline lane) to filter everything and open a pool card with live `slot0()` price, liquidity, tick range, net token flow, indexing status, and top traders
 - **Trader focus**: click a trader anywhere to highlight their swaps across all views
 - **Price panel**: per-pool step chart with buy/sell markers and the live on-chain price; small multiples for all pools
-- **ENSv2 names** for traders and pools (in progress)
+- **ENS names and avatars** read directly from Sepolia resolver records
 
 ## Stack
 
@@ -60,8 +60,27 @@ cp .env.example .env
 npm run dev
 ```
 
-MultiBaas setup used for this deployment: the three pool addresses are linked to `UniswapV3Pool` contracts under the aliases `wethusdcpool1`, `wethunipool1`, and `usdcuni3pool1`, and an event query named `swap_events` selects the `Swap` event inputs plus `block_number`, `tx_hash`, `contract_address`, and `triggered_at`. Pool and token metadata lives in `src/config/pools.js`.
+MultiBaas setup used for this deployment: the three pool addresses are linked to `UniswapV3Pool` contracts under the aliases `wethusdcpool1`, `wethunipool1`, and `usdcuni3pool1`, and an event query named `swap_events` selects the `Swap` event inputs plus `block_number`, `tx_hash`, `contract_address`, and `triggered_at`. Pool and token metadata is loaded from ENS text records; `src/config/pools.js` contains only the runtime collection and calculation helpers.
 
 ## Team
 
 Built at ETHGlobal Tokyo 2026.
+
+## ENS directory and avatars
+
+The app starts with `nameflow.eth` on Sepolia. Its `nameflow:directory` text record contains a versioned list of pool and wallet names. Each pool's `nameflow:pool` text record contains pair metadata and MultiBaas aliases. Addresses come from ENS forward resolution and pool token addresses and fee tiers are verified against the pool contract. Missing or invalid directory records show an error rather than a static identity list.
+
+Pool icons prefer the ENS `avatar` record through viem. Until avatar URLs are published, the UI uses the prepared local image matching the resolved token pair. This image fallback contains no ENS names or wallet/pool addresses. The three prepared PNGs are in `public/pool-avatars/`; they have not been published to GitHub and their avatar records have not been set. After hosting them at public HTTPS URLs, add each URL as the corresponding pool's `avatar` in the publication seed and run the publisher. Do not use a localhost URL in an ENS avatar record.
+
+Publication uses an external seed at `~/.config/nameflow/ens-directory-seed.json` (override with `NAMEFLOW_SEED_FILE`). The seed is only an administrative publication input; the frontend never reads it. Set `SEPOLIA_PRIVATE_KEY` locally for publication; never commit the key or expose it through a `VITE_` variable.
+
+```bash
+node scripts/publish-ens-directory.mjs
+node scripts/verify-ens-directory.mjs
+```
+
+The publisher skips unchanged records, simulates a resolver multicall, waits for confirmation, and verifies the resulting records. The verifier loads the same ENS directory as the app and checks forward and managed reverse mappings. Managed reverse lookup reads `nameflow:name` at `<address-without-0x>.lookup.nameflow.eth` and accepts it only if forward resolution matches the address. This namespace lookup is separate from an ENS primary reverse name. Standard primary reverse resolution is used as a fallback.
+
+ENS reads are cached for five minutes (one minute for missing records). Reload the page after changing records to read them immediately.
+
+The existing simulator has five wallets. Its main wallet and four derived sub-wallets are listed as Bob identities in the ENS directory. The simulator panel displays the resolved names while retaining addresses for copying. To register wallet names from a local public list (`[{"name":"…","address":"0x…"}]`), use `NAMEFLOW_WALLETS_FILE` with `scripts/register-ens-wallets.mjs` and the namespace owner's local `SEPOLIA_PRIVATE_KEY`. This creates missing subname registries and forward/managed reverse records; it does not generate or fund wallets.

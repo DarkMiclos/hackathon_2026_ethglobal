@@ -64,7 +64,7 @@ function draw() {
     const tId = `t:${s.trader}`
     const pId = `p:${s.pool.address}`
     const kId = `k:${s.tokenOut.symbol}`
-    addNode(tId, { kind: 'trader', label: truncateAddr(s.trader), address: s.trader, color: '#3b82f6' })
+    addNode(tId, { kind: 'trader', label: s.traderName || truncateAddr(s.trader), address: s.trader, color: '#3b82f6' })
     addNode(pId, { kind: 'pool', label: s.pool.name, pool: s.pool, color: s.pool.color })
     addNode(kId, { kind: 'token', label: s.tokenOut.symbol, color: s.tokenOut.color })
     addLink(tId, pId, v, { color: s.pool.color, trader: s.trader, pool: s.pool })
