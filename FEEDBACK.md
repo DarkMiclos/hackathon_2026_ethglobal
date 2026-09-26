@@ -1,6 +1,8 @@
 # Uniswap Developer Feedback — NameFlow (ETHGlobal Tokyo 2026)
 
-NameFlow is a live dashboard for Uniswap V3 swaps on Sepolia. It indexes the `Swap` event of three
+A fun, flowy, wavy app called NameFlow that displays Uniswap V3 pool info using Curvegrid and ENS.
+
+Under the hood it indexes the `Swap` event of three
 V3 pools through MultiBaas, decodes `sqrtPriceX96`, `tick` and `liquidity` straight from the event,
 and drives real trades through `SwapRouter02` from a built-in simulator so there is always traffic
 to visualise. Everything below comes from building that in a weekend.

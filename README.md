@@ -1,6 +1,6 @@
 # NameFlow — Live Uniswap Trading Dashboard
 
-**NameFlow turns Uniswap V3 swap events into a live, ENS-named trading dashboard: MultiBaas indexes the pools, ENSv2 records name the traders and the watchlist, and D3 draws who is trading what, where, in real time.**
+**A fun, flowy, wavy app called NameFlow that displays Uniswap V3 pool info using Curvegrid and ENS.**
 
 Built at **ETHGlobal Tokyo 2026**. Sepolia testnet. Live demo: see the Vercel link on the repository page.
 
