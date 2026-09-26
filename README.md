@@ -34,7 +34,18 @@ All on-chain data on screen comes through the MultiBaas REST API using the offic
 | Pool card: "indexed to block" | Per-contract event indexing status | `ContractsApi.getEventIndexingStatus` |
 | Header: chain head and base fee | Chain status | `ChainsApi.getChainStatus` |
 
-The dashboard polls the event query every 8 seconds (every 3 seconds for a minute after the simulator broadcasts swaps) and refreshes pool state every 30 seconds. New rows are diffed by transaction hash so only fresh swaps animate.
+### Request budget
+
+The dashboard is designed to stay well inside API limits:
+
+- An idle poll is **one request**: the `swap_events` record count, every 10 seconds (every 4 seconds for 90 seconds after the simulator broadcasts swaps).
+- Rows are fetched **only when the count moves**, and only the rows past the ones already held (the saved query returns rows in ascending block order with stable offsets). The first load takes the newest 200 rows in parallel 50-row pages.
+- Pool state (`slot0`, `liquidity`, indexer status) and the aggregated query are refreshed **only for pools that received new swaps**, never on a timer.
+- The chain head in the header refreshes once a minute.
+- Polling pauses while the tab is hidden, never overlaps an in-flight request, and backs off exponentially on errors.
+- The header shows a live count of MultiBaas requests made since page load.
+
+Steady state with no trading is about 7 requests per minute. ENS lookups go to the Sepolia RPC, not MultiBaas, and cache both hits and misses.
 
 In development the Vite dev server proxies `/multibaas-api` to the deployment to avoid CORS. If MultiBaas is not configured or unreachable the UI falls back to demo data and says so in the header.
 

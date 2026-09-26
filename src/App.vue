@@ -24,6 +24,11 @@
             <span v-if="chainStatus.baseFee" class="hidden xl:inline"> · {{ (Number(chainStatus.baseFee) / 1e9).toFixed(2) }} gwei</span>
           </span>
           <span v-if="totalSwaps" class="text-gray-500 font-mono whitespace-nowrap hidden lg:inline">· {{ totalSwaps }} swaps indexed</span>
+          <span
+            v-if="configured"
+            class="text-gray-600 font-mono whitespace-nowrap hidden lg:inline"
+            title="MultiBaas requests made by this page since load"
+          >· {{ apiCalls }} API calls</span>
         </div>
 
         <!-- ENS Search -->
@@ -39,5 +44,5 @@
 import EnsSearch from './components/EnsSearch.vue'
 import { useMultiBaas } from '@/composables/useMultiBaas'
 
-const { isLive, configured, error, chainStatus, totalSwaps } = useMultiBaas()
+const { isLive, configured, error, chainStatus, totalSwaps, apiCalls } = useMultiBaas()
 </script>

@@ -19,9 +19,14 @@ const client = createPublicClient({
   // universalResolverAddress: '0x...',
 })
 
-// Simple in-memory cache to avoid re-resolving during the same session
+// Simple in-memory cache to avoid re-resolving during the same session.
+// Misses are cached too (for NEGATIVE_TTL_MS) so an address without a name does not cost
+// an RPC round-trip on every graph re-render.
 const nameCache = new Map()
 const addressCache = new Map()
+const negativeCache = new Map() // lowercased address -> expiry timestamp
+const inFlight = new Map()      // lowercased address -> pending promise
+const NEGATIVE_TTL_MS = 10 * 60 * 1000
 
 export function useEns() {
   /**
@@ -42,14 +47,23 @@ export function useEns() {
   async function resolveAddress(address) {
     const lower = address.toLowerCase()
     if (nameCache.has(lower)) return nameCache.get(lower)
+    const miss = negativeCache.get(lower)
+    if (miss && miss > Date.now()) return null
+    if (inFlight.has(lower)) return inFlight.get(lower)
 
-    try {
-      const name = await client.getEnsName({ address })
-      if (name) nameCache.set(lower, name)
-      return name
-    } catch {
-      return null
-    }
+    const p = client.getEnsName({ address })
+      .then((name) => {
+        if (name) nameCache.set(lower, name)
+        else negativeCache.set(lower, Date.now() + NEGATIVE_TTL_MS)
+        return name
+      })
+      .catch(() => {
+        negativeCache.set(lower, Date.now() + NEGATIVE_TTL_MS)
+        return null
+      })
+      .finally(() => inFlight.delete(lower))
+    inFlight.set(lower, p)
+    return p
   }
 
   /**

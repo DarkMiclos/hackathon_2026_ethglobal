@@ -14,121 +14,138 @@
         <button class="text-gray-500 hover:text-gray-300 text-xs" @click="open = false">Close</button>
       </div>
 
-      <!-- Main wallet -->
-      <div class="space-y-1">
-        <label class="text-xs text-gray-500">Main Wallet</label>
-        <div class="flex items-center gap-1">
-          <code class="text-xs text-gray-300 bg-surface-900 px-2 py-1 rounded flex-1 truncate">{{ wallets[0]?.address || 'no VITE_TEST_PRIVATE_KEY' }}</code>
-          <button class="text-xs text-blue-400 hover:text-blue-300 shrink-0" @click="copyAddress(0)">Copy</button>
-        </div>
-        <div class="flex items-center justify-between text-xs">
-          <span class="text-gray-500">Balance</span>
-          <span class="text-gray-300">{{ wallets[0]?.balance || '...' }} ETH</span>
-        </div>
+      <div v-if="!keyConfigured" class="text-xs text-yellow-400 bg-yellow-400/10 rounded p-2">
+        Set <code>VITE_TEST_PRIVATE_KEY</code> in <code>.env</code> to a throwaway Sepolia key to enable the simulator.
       </div>
 
-      <!-- Sub-wallets toggle -->
-      <div v-if="wallets.length > 1" class="space-y-1">
-        <button class="text-xs text-gray-500 hover:text-gray-300" @click="showSubWallets = !showSubWallets">
-          {{ showSubWallets ? '▾' : '▸' }} {{ wallets.length - 1 }} sub-wallets
-        </button>
-        <div v-if="showSubWallets" class="space-y-1 pl-2 border-l border-surface-700">
-          <div v-for="(w, i) in wallets.slice(1)" :key="w.address" class="flex items-center gap-1">
-            <code class="text-[10px] text-gray-400 bg-surface-900 px-1.5 py-0.5 rounded truncate flex-1">{{ w.address }}</code>
-            <span class="text-[10px] text-gray-500 shrink-0">{{ w.balance || '...' }} Ξ</span>
+      <template v-else>
+        <!-- Readiness summary -->
+        <div class="flex items-center justify-between text-xs">
+          <span class="text-gray-500">
+            {{ readyWallets.length }}/{{ wallets.length }} wallets ready
+            <span v-if="inspectedAt" class="text-gray-600">· checked {{ checkedAgo }}</span>
+          </span>
+          <span
+            class="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+            :class="allReady ? 'bg-accent-green/15 text-accent-green' : 'bg-accent-amber/15 text-accent-amber'"
+          >{{ allReady ? 'READY' : 'NEEDS SETUP' }}</span>
+        </div>
+
+        <!-- Wallet list -->
+        <div class="space-y-1">
+          <div
+            v-for="w in wallets"
+            :key="w.address"
+            class="rounded-lg bg-surface-900 px-2 py-1.5"
+          >
+            <div class="flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="w.ready ? 'bg-accent-green' : w.inspected ? 'bg-accent-amber' : 'bg-surface-600'" />
+              <span class="text-[10px] text-gray-500 shrink-0">{{ w.index === 0 ? 'main' : `#${w.index + 1}` }}</span>
+              <code class="text-[10px] text-gray-300 truncate flex-1">{{ w.address }}</code>
+              <button class="text-[10px] text-accent-blue hover:text-blue-300 shrink-0" @click="copy(w.address)">copy</button>
+            </div>
+            <div class="mt-0.5 flex items-center justify-between text-[10px] font-mono text-gray-400">
+              <span>{{ fmtEth(w.eth) }} ETH · {{ fmtEth(w.weth) }} WETH · {{ fmtUsdc(w.usdc, 1) }} USDC</span>
+              <span v-if="w.inspected && !w.ready" class="text-accent-amber font-sans">{{ needsLabel(w.needs) }}</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div v-if="!hasFunds" class="text-xs text-yellow-400 bg-yellow-400/10 rounded p-2">
-        Fund the main wallet with ~0.3 Sepolia ETH from a
-        <a
-          href="https://www.alchemy.com/faucets/ethereum-sepolia"
-          target="_blank"
-          class="underline hover:text-yellow-300"
-        >faucet</a>, then click Refresh.
-      </div>
+        <!-- Funding hint -->
+        <div v-if="mainShortfallEth > 0n" class="text-xs text-yellow-400 bg-yellow-400/10 rounded p-2">
+          Send at least <b>{{ fmtEth(mainShortfallEth) }} ETH</b> more to the main wallet from a
+          <a href="https://www.alchemy.com/faucets/ethereum-sepolia" target="_blank" rel="noopener" class="underline hover:text-yellow-300">faucet</a>,
+          then click Refresh.
+        </div>
 
-      <div class="flex gap-2">
-        <button
-          class="flex-1 py-1.5 text-xs bg-surface-700 hover:bg-surface-600 text-gray-300 rounded-lg transition-colors"
-          :disabled="status === 'running'"
-          @click="refreshBalance"
-        >
-          Refresh
-        </button>
-        <button
-          v-if="!setupDone"
-          class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors"
-          :class="hasFunds && status !== 'running'
-            ? 'bg-purple-600 hover:bg-purple-500 text-white'
-            : 'bg-surface-700 text-gray-500 cursor-not-allowed'"
-          :disabled="!hasFunds || status === 'running'"
-          @click="setupWallets"
-        >
-          {{ status === 'running' ? 'Setting up...' : 'Setup Wallets' }}
-        </button>
-        <button
-          v-else
-          class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors"
-          :class="status !== 'running'
-            ? 'bg-green-600 hover:bg-green-500 text-white'
-            : 'bg-surface-700 text-gray-500 cursor-not-allowed'"
-          :disabled="status === 'running'"
-          @click="onExecute"
-        >
-          {{ status === 'running' ? `Swapping ${swapsDone}/${swapsTotal}...` : `Execute ${swapsTotal} Swaps` }}
-        </button>
-      </div>
+        <!-- Actions -->
+        <div class="flex gap-2">
+          <button
+            class="flex-1 py-1.5 text-xs bg-surface-700 hover:bg-surface-600 text-gray-300 rounded-lg transition-colors disabled:opacity-50"
+            :disabled="busy"
+            @click="inspectWallets"
+          >
+            {{ status === 'inspecting' ? 'Checking…' : 'Refresh' }}
+          </button>
+          <button
+            v-if="!allReady"
+            class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            :class="canPrepare ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-surface-700 text-gray-500 cursor-not-allowed'"
+            :disabled="!canPrepare"
+            @click="prepareWallets"
+          >
+            {{ status === 'preparing' ? 'Preparing…' : 'Prepare wallets' }}
+          </button>
+          <button
+            class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            :class="canExecute ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-surface-700 text-gray-500 cursor-not-allowed'"
+            :disabled="!canExecute"
+            @click="onExecute"
+          >
+            <template v-if="status === 'swapping'">Swapping {{ swapsDone + swapsFailed }}/{{ swapsTotal }}…</template>
+            <template v-else>Execute {{ plannedSwaps }} swaps</template>
+          </button>
+        </div>
 
-      <div v-if="logs.length" class="max-h-32 overflow-y-auto space-y-0.5">
-        <div
-          v-for="(entry, i) in logs"
-          :key="i"
-          class="text-[10px] font-mono"
-          :class="entry.msg.startsWith('Error') ? 'text-red-400' : 'text-gray-500'"
-        >{{ entry.msg }}</div>
-      </div>
+        <div v-if="logs.length" class="max-h-32 overflow-y-auto space-y-0.5 trade-tape">
+          <div
+            v-for="(entry, i) in logs"
+            :key="i"
+            class="text-[10px] font-mono"
+            :class="entry.level === 'error' ? 'text-red-400' : 'text-gray-500'"
+          >{{ entry.msg }}</div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSimulateSwaps } from '@/composables/useSimulateSwaps'
 
 const emit = defineEmits(['executed'])
 
 const {
-  wallets,
-  hasFunds,
-  status,
-  logs,
-  swapsDone,
-  swapsTotal,
-  setupDone,
-  initWallet,
-  refreshBalance,
-  setupWallets,
-  executeSwaps,
+  keyConfigured,
+  wallets, status, busy, logs,
+  swapsDone, swapsFailed, swapsTotal, plannedSwaps,
+  readyWallets, allReady, mainShortfallEth, inspectedAt,
+  initWallet, inspectWallets, prepareWallets, executeSwaps,
+  fmtEth, fmtUsdc,
 } = useSimulateSwaps()
 
 const open = ref(false)
-const showSubWallets = ref(false)
+const now = ref(Date.now())
+let timer = null
+onMounted(() => { timer = setInterval(() => { now.value = Date.now() }, 5000) })
+onUnmounted(() => clearInterval(timer))
+
+const checkedAgo = computed(() => {
+  const s = Math.max(0, Math.floor((now.value - inspectedAt.value) / 1000))
+  return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`
+})
+
+const canPrepare = computed(() => !busy.value && wallets.value.some((w) => w.inspected) && mainShortfallEth.value === 0n)
+const canExecute = computed(() => !busy.value && readyWallets.value.length > 0)
+
+const NEED_LABELS = { eth: 'gas', weth: 'wrap', 'approve-weth': 'approve WETH', 'approve-usdc': 'approve USDC', usdc: 'seed USDC' }
+function needsLabel(needs) {
+  return 'needs ' + needs.map((n) => NEED_LABELS[n] || n).join(', ')
+}
 
 function openPanel() {
   initWallet()
-  refreshBalance()
+  inspectWallets()
   open.value = true
 }
 
 async function onExecute() {
   await executeSwaps()
-  emit('executed')
+  if (swapsDone.value > 0) emit('executed')
 }
 
-function copyAddress(index) {
-  const addr = wallets.value[index]?.address
-  if (addr) navigator.clipboard?.writeText(addr)
+function copy(addr) {
+  navigator.clipboard?.writeText(addr)
 }
 </script>

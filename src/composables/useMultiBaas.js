@@ -12,12 +12,20 @@ import { POOLS } from '@/config/pools'
  *
  * Everything on-chain the dashboard shows comes through the MultiBaas REST API via the
  * official SDK:
- *   - EventQueriesApi.executeEventQuery          -> the saved `swap_events` query (trade tape, charts)
+ *   - EventQueriesApi.countEventQueryRecords     -> cheap "anything new?" probe (1 call per poll)
+ *   - EventQueriesApi.executeEventQuery          -> the saved `swap_events` query, fetched incrementally
  *   - EventQueriesApi.executeArbitraryEventQuery -> server-side aggregates per pool (last price, net flow)
- *   - EventQueriesApi.countEventQueryRecords     -> all-time swap count
- *   - ContractsApi.callContractFunction          -> live slot0() / liquidity() reads on each pool
+ *   - ContractsApi.callContractFunction          -> live slot0() / liquidity() reads on a pool
  *   - ContractsApi.getEventIndexingStatus        -> "indexed to block N" per pool
  *   - ChainsApi.getChainStatus                   -> chain head + base fee
+ *
+ * Request budget rules (see DashboardView for the scheduler):
+ *   - A poll is one count request. Rows are only fetched when the count moved, and only the
+ *     rows past what we already hold (the saved query returns rows in ascending block order
+ *     with stable offsets, verified against the deployment).
+ *   - Pool state and aggregates only change when a swap lands, so they are refreshed for the
+ *     pools that received new swaps, never on a timer.
+ *   - Every request is counted in `apiCalls` so the budget is visible in the UI.
  *
  * In dev, calls go through the Vite proxy (/multibaas-api) to avoid CORS.
  */
@@ -29,7 +37,8 @@ const BASE_PATH = import.meta.env.DEV
   : `${MULTIBAAS_URL_RAW}/api/v0`
 
 const SWAP_SIGNATURE = 'Swap(address,address,int256,int256,uint160,uint128,int24)'
-const PAGE_SIZE = 50 // MultiBaas rejects event query pages larger than this
+const PAGE_SIZE = 50   // MultiBaas rejects event query pages larger than this
+const MAX_ROWS = 200   // rows kept in memory / drawn
 const configured = Boolean(MULTIBAAS_URL_RAW && API_KEY)
 
 const config = new Configuration({ basePath: BASE_PATH, accessToken: API_KEY })
@@ -43,51 +52,83 @@ const loading = ref(false)
 const error = ref(null)
 const chainStatus = ref(null)      // { blockNumber, chainID, baseFee }
 const totalSwaps = ref(0)          // all-time count from MultiBaas
+const swaps = ref([])              // parsed rows, oldest first, at most MAX_ROWS
 const lastFetchedAt = ref(null)
+const apiCalls = ref(0)            // MultiBaas requests made this session
+let indexedCount = -1              // how many rows of the saved query we have accounted for
+let demoLoaded = false
+
+function tracked(promise) {
+  apiCalls.value++
+  return promise
+}
 
 export function useMultiBaas() {
   /**
-   * Latest swaps from the saved `swap_events` event query, oldest first.
-   * MultiBaas caps a single results page at 50 rows, so `limit` is fetched as parallel pages.
+   * Bring `swaps` up to date with the saved `swap_events` query using the fewest requests:
+   * one count call, then only the rows we have not seen. Returns the newly added rows.
    */
-  async function fetchSwaps({ limit = 200, offset = 0 } = {}) {
+  async function syncSwaps() {
     if (!configured) {
       isLive.value = false
-      return getDummySwaps()
+      if (!demoLoaded) { swaps.value = getDummySwaps(); demoLoaded = true }
+      return { added: [], changed: !swaps.value.length }
     }
 
     loading.value = true
     error.value = null
     try {
-      const pages = Math.max(1, Math.ceil(limit / PAGE_SIZE))
-      const [countRes, ...pageRes] = await Promise.all([
-        eventQueries.countEventQueryRecords('swap_events').catch(() => null),
-        ...Array.from({ length: pages }, (_, i) =>
-          eventQueries.executeEventQuery('swap_events', offset + i * PAGE_SIZE, PAGE_SIZE),
-        ),
-      ])
-      const rows = pageRes.flatMap((res) => res.data.result?.rows || [])
-      if (countRes) totalSwaps.value = Number(countRes.data.result) || rows.length
+      const countRes = await tracked(eventQueries.countEventQueryRecords('swap_events'))
+      const count = Number(countRes.data.result) || 0
       isLive.value = true
       lastFetchedAt.value = Date.now()
-      const seen = new Set()
-      return rows
-        .map(parseRow)
-        .filter((s) => (seen.has(s.id) ? false : seen.add(s.id)))
-        .sort(byChainOrder)
+      totalSwaps.value = count
+
+      if (count === indexedCount) return { added: [], changed: false }
+
+      if (indexedCount < 0 || count < indexedCount) {
+        // First load, or the index shrank (reorg / re-sync): take the newest MAX_ROWS.
+        const start = Math.max(0, count - MAX_ROWS)
+        const rows = await fetchRange(start, count - start)
+        swaps.value = rows
+        indexedCount = start + rows.length
+        return { added: [], changed: true, initial: true }
+      }
+
+      const rows = await fetchRange(indexedCount, count - indexedCount)
+      const known = new Set(swaps.value.map((s) => s.id))
+      const added = rows.filter((r) => !known.has(r.id))
+      swaps.value = [...swaps.value, ...added].slice(-MAX_ROWS)
+      // If the results lagged the count, only advance by what actually arrived so the rest is
+      // picked up on the next poll instead of being skipped.
+      indexedCount += rows.length
+      return { added, changed: added.length > 0 }
     } catch (err) {
-      console.error('MultiBaas fetch failed, using demo data:', err)
+      console.error('MultiBaas sync failed:', err)
       error.value = err?.response?.data?.message || err.message
       isLive.value = false
-      return getDummySwaps()
+      if (!swaps.value.length && !demoLoaded) { swaps.value = getDummySwaps(); demoLoaded = true }
+      throw err
     } finally {
       loading.value = false
     }
   }
 
+  /** Fetch `n` rows from `offset` as parallel 50-row pages, parsed and in chain order. */
+  async function fetchRange(offset, n) {
+    if (n <= 0) return []
+    const pages = Math.ceil(n / PAGE_SIZE)
+    const res = await Promise.all(
+      Array.from({ length: pages }, (_, i) =>
+        tracked(eventQueries.executeEventQuery('swap_events', offset + i * PAGE_SIZE, Math.min(PAGE_SIZE, n - i * PAGE_SIZE))),
+      ),
+    )
+    return res.flatMap((r) => r.data.result?.rows || []).map(parseRow).sort(byChainOrder)
+  }
+
   /**
    * Server-side aggregates per pool computed by MultiBaas (no client-side reduce):
-   * last price, block range, net token flows, tick range.
+   * last price, block range, net token flows, tick range. One request for all pools.
    */
   async function fetchPoolAggregates() {
     if (!configured) return demoAggregates()
@@ -108,7 +149,7 @@ export function useMultiBaas() {
         }],
         groupBy: 'contract_address',
       }
-      const res = await eventQueries.executeArbitraryEventQuery(query, 0, 50)
+      const res = await tracked(eventQueries.executeArbitraryEventQuery(query, 0, 50))
       const out = {}
       for (const row of res.data.result?.rows || []) {
         out[(row.contract_address || '').toLowerCase()] = {
@@ -124,18 +165,22 @@ export function useMultiBaas() {
       return out
     } catch (err) {
       console.warn('MultiBaas aggregate query failed:', err?.message)
-      return {}
+      return null
     }
   }
 
-  /** Live pool state via MultiBaas contract calls: slot0() and liquidity(). */
-  async function fetchPoolState(pool) {
+  /**
+   * Live pool state via MultiBaas contract calls: slot0() and liquidity(), plus the indexer
+   * status when `withStatus` is set. Three requests per pool, so callers pass only the pools
+   * that actually changed.
+   */
+  async function fetchPoolState(pool, { withStatus = true } = {}) {
     if (!configured) return demoPoolState(pool)
     try {
       const [slot0, liq, status] = await Promise.all([
-        contracts.callContractFunction(pool.alias, pool.label, 'slot0', { args: [] }),
-        contracts.callContractFunction(pool.alias, pool.label, 'liquidity', { args: [] }),
-        contracts.getEventIndexingStatus(pool.alias, pool.label).catch(() => null),
+        tracked(contracts.callContractFunction(pool.alias, pool.label, 'slot0', { args: [] })),
+        tracked(contracts.callContractFunction(pool.alias, pool.label, 'liquidity', { args: [] })),
+        withStatus ? tracked(contracts.getEventIndexingStatus(pool.alias, pool.label)).catch(() => null) : null,
       ])
       const s = slot0.data.result?.output || []
       return {
@@ -160,7 +205,7 @@ export function useMultiBaas() {
       return chainStatus.value
     }
     try {
-      const res = await chains.getChainStatus()
+      const res = await tracked(chains.getChainStatus())
       chainStatus.value = res.data.result
       return chainStatus.value
     } catch (err) {
@@ -176,8 +221,10 @@ export function useMultiBaas() {
     error,
     chainStatus,
     totalSwaps,
+    swaps,
     lastFetchedAt,
-    fetchSwaps,
+    apiCalls,
+    syncSwaps,
     fetchPoolAggregates,
     fetchPoolState,
     fetchChainStatus,
@@ -240,38 +287,34 @@ function getDummySwaps() {
   const now = Math.floor(Date.now() / 1000)
   const n = 36
   const drift = { [POOLS[0].address]: 0, [POOLS[1].address]: 0, [POOLS[2].address]: 0 }
-  const swaps = []
+  const out = []
   for (let i = 0; i < n; i++) {
     const pool = POOLS[Math.floor(seeded(i) * 3)]
     const trader = DEMO_TRADERS[Math.floor(seeded(i + 100) * DEMO_TRADERS.length)]
     const sell = seeded(i + 200) > 0.5
-    const size = 0.5 + seeded(i + 300) * 2 // multiplier on a base trade size
+    const size = 0.5 + seeded(i + 300) * 2
     drift[pool.address] += (sell ? 1 : -1) * size * 0.0006
     const sqrt = DEMO_SQRT[pool.address] * BigInt(Math.round((1 + drift[pool.address]) * 1e6)) / 1000000n
 
     let amount0, amount1
     if (pool === POOLS[0]) {
-      // token0 USDC, token1 WETH. Trader sells WETH -> WETH in (+), USDC out (-)
       const weth = 0.001 * size
       const usdc = weth * 31400
       amount1 = BigInt(Math.round(weth * 1e18)) * (sell ? 1n : -1n)
       amount0 = BigInt(Math.round(usdc * 1e6)) * (sell ? -1n : 1n)
     } else if (pool === POOLS[1]) {
-      // token0 UNI, token1 WETH. base UNI. sell UNI -> UNI in (+), WETH out (-)
       const uni = 0.00006 * size
       const weth = uni * 15.6
       amount0 = BigInt(Math.round(uni * 1e18)) * (sell ? 1n : -1n)
       amount1 = BigInt(Math.round(weth * 1e18)) * (sell ? -1n : 1n)
     } else {
-      // token0 USDC, token1 UNI. base UNI. sell UNI -> UNI in (+), USDC out (-)
       const uni = 0.00001 * size
       const usdc = uni * 553000
       amount1 = BigInt(Math.round(uni * 1e18)) * (sell ? 1n : -1n)
       amount0 = BigInt(Math.round(usdc * 1e6)) * (sell ? -1n : 1n)
     }
 
-    const ts = now - (n - i) * 40 - Math.floor(seeded(i + 400) * 20)
-    swaps.push({
+    out.push({
       id: `demo-${i}`,
       sender: ROUTER,
       recipient: trader,
@@ -284,10 +327,10 @@ function getDummySwaps() {
       blockNumber: 11784500 + i * 3,
       txHash: `0x${(i + 1).toString(16).padStart(64, 'a')}`,
       contractAddress: pool.address,
-      timestamp: ts,
+      timestamp: now - (n - i) * 40 - Math.floor(seeded(i + 400) * 20),
     })
   }
-  return swaps
+  return out
 }
 
 function demoAggregates() {

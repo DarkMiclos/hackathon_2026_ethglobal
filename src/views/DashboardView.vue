@@ -117,8 +117,9 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed } from 'vue'
 import { useMultiBaas } from '@/composables/useMultiBaas'
+import { usePoller } from '@/composables/usePoller'
 import { POOLS, ALL_POOLS, enrichSwap, swapValueUsdc, decodePrice, truncateAddr } from '@/config/pools'
 import PoolSelector from '@/components/PoolSelector.vue'
 import StatsCard from '@/components/StatsCard.vue'
@@ -137,9 +138,11 @@ const VIEWS = [
   { id: 'timeline', label: 'Timeline' },
 ]
 
-const { fetchSwaps, fetchPoolAggregates, fetchPoolState, fetchChainStatus, totalSwaps } = useMultiBaas()
+const {
+  configured, swaps: rawSwaps, totalSwaps,
+  syncSwaps, fetchPoolAggregates, fetchPoolState, fetchChainStatus,
+} = useMultiBaas()
 
-const rawSwaps = ref([])
 const poolStates = ref({})     // address -> slot0/liquidity/indexing state
 const aggregates = ref({})     // address -> MultiBaas aggregated row
 // Pool metadata stays non-reactive so identity comparisons against enriched swaps keep working.
@@ -199,60 +202,53 @@ function toggleTrader(addr) {
 }
 
 // ---- polling -------------------------------------------------------------
+//
+// Request budget: an idle poll costs exactly one MultiBaas request (the row count).
+// Rows, pool state (slot0 / liquidity / indexer status) and aggregates are only fetched
+// when that count moves, and pool state only for the pools that actually received swaps.
+// The chain head in the header is refreshed on its own slow timer. Polling pauses while
+// the tab is hidden and backs off on errors (see usePoller).
 
-const SWAP_POLL_MS = 8000
-const STATE_POLL_MS = 30000
-let swapTimer = null
-let stateTimer = null
-let seenIds = new Set()
-let firstLoad = true
+const SWAP_POLL_MS = 10000
+const CHAIN_POLL_MS = 60000
+let clearNewTimer = null
 
-async function loadSwaps() {
-  const next = await fetchSwaps({ limit: 200 })
-  const fresh = firstLoad ? [] : next.filter((s) => !seenIds.has(s.id)).map((s) => s.id)
-  seenIds = new Set(next.map((s) => s.id))
-  firstLoad = false
-  newSwapIds.value = fresh
-  rawSwaps.value = next
-  if (fresh.length) {
-    // refresh live pool state right away so the price line follows the new swaps
-    loadPoolStates()
-    setTimeout(() => { newSwapIds.value = [] }, 4000)
+async function pollSwaps() {
+  const { added, changed, initial } = await syncSwaps()
+  if (!changed) return
+
+  if (initial) {
+    await refreshDerived(POOLS)
+    return
   }
+
+  newSwapIds.value = added.map((s) => s.id)
+  clearTimeout(clearNewTimer)
+  clearNewTimer = setTimeout(() => { newSwapIds.value = [] }, 4000)
+
+  // Only the pools that changed need fresh slot0 / liquidity / aggregates.
+  const touched = new Set(added.map((s) => s.contractAddress))
+  await refreshDerived(POOLS.filter((p) => touched.has(p.address)))
 }
 
-async function loadPoolStates() {
+/** Aggregates (one request) + per-pool state (three requests per pool) for the given pools. */
+async function refreshDerived(pools) {
+  if (!pools.length) return
   const [aggs, ...states] = await Promise.all([
     fetchPoolAggregates(),
-    ...POOLS.map((p) => fetchPoolState(p)),
+    ...pools.map((p) => fetchPoolState(p)),
   ])
-  aggregates.value = aggs || {}
+  if (aggs) aggregates.value = aggs
   const next = { ...poolStates.value }
-  POOLS.forEach((p, i) => { if (states[i]) next[p.address] = states[i] })
+  pools.forEach((p, i) => { if (states[i]) next[p.address] = states[i] })
   poolStates.value = next
-  fetchChainStatus()
 }
 
-function startPolling(swapMs = SWAP_POLL_MS) {
-  clearInterval(swapTimer)
-  swapTimer = setInterval(loadSwaps, swapMs)
-}
+const swapPoller = usePoller(pollSwaps, { interval: SWAP_POLL_MS })
+usePoller(fetchChainStatus, { interval: CHAIN_POLL_MS, enabled: configured })
 
-onMounted(async () => {
-  await Promise.all([loadSwaps(), loadPoolStates()])
-  startPolling()
-  stateTimer = setInterval(loadPoolStates, STATE_POLL_MS)
-})
-
-onUnmounted(() => {
-  clearInterval(swapTimer)
-  clearInterval(stateTimer)
-})
-
-/** After the simulator broadcasts swaps, poll fast for a minute so they animate in as MultiBaas indexes them. */
+/** After the simulator broadcasts swaps, probe faster for a while so they animate in as MultiBaas indexes them. */
 function onSwapsExecuted() {
-  loadSwaps()
-  startPolling(3000)
-  setTimeout(() => startPolling(SWAP_POLL_MS), 60000)
+  swapPoller.burst(4000, 90000)
 }
 </script>
