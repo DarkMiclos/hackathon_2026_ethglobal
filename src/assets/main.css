@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* D3 visualization containers */
+.viz-container svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Scrollbar styling for the trade tape */
+.trade-tape::-webkit-scrollbar {
+  width: 6px;
+}
+.trade-tape::-webkit-scrollbar-track {
+  background: theme('colors.surface.800');
+}
+.trade-tape::-webkit-scrollbar-thumb {
+  background: theme('colors.surface.600');
+  border-radius: 3px;
+}
+
+/* Pulse animation for live indicator */
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.live-dot {
+  animation: pulse-live 2s ease-in-out infinite;
+}
