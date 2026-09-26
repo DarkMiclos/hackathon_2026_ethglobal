@@ -140,6 +140,7 @@ export function useEnsAdmin() {
         color: POOL_COLORS[existingPools.length % POOL_COLORS.length],
         alias,
         mbLabel: 'uniswapv3pool',
+        avatar: '',
         token0, token1, base, quote,
       }
       log(`Pool ${address.slice(0, 8)}… is ${draft.value.name} (${Number(fee) / 10000}% fee)`)
@@ -198,6 +199,13 @@ export function useEnsAdmin() {
       const existingMeta = await publicClient.getEnsText({ name: ensName, key: POOL_METADATA_KEY }).catch(() => null)
       if (existingMeta !== JSON.stringify(metadata)) calls.push(encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [dns(ensName), POOL_METADATA_KEY, JSON.stringify(metadata)] }))
       if (rawDir !== JSON.stringify(directory)) calls.push(encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [dns(ns), DIRECTORY_KEY, JSON.stringify(directory)] }))
+      const avatar = (d.avatar || '').trim()
+      if (avatar) {
+        const u = new URL(avatar)
+        if (u.protocol !== 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) throw new Error('Avatar must be a public https:// URL')
+        const existingAvatar = await publicClient.getEnsText({ name: ensName, key: 'avatar' }).catch(() => null)
+        if (existingAvatar !== avatar) calls.push(encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [dns(ensName), 'avatar', avatar] }))
+      }
       if (calls.length) {
         log(`Publishing ${calls.length} resolver record(s)…`)
         await write(wc, { address: resolver, abi: resolverAbi, functionName: 'multicall', args: [calls] })
@@ -246,7 +254,13 @@ export function useEnsAdmin() {
     }
   }
 
-  return { hasWallet, account, isOwner, ownerAddress, status, busy, logs, draft, connect, inspectPool, publishPool }
+  function reset() {
+    draft.value = null
+    logs.value = []
+    if (status.value !== 'publishing') status.value = 'idle'
+  }
+
+  return { hasWallet, account, isOwner, ownerAddress, status, busy, logs, draft, connect, inspectPool, publishPool, reset }
 }
 
 function hashColor(addr) {

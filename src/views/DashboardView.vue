@@ -11,7 +11,9 @@
         :pools="pools"
         :active-pool="activePool"
         :counts="poolCounts"
+        addable
         @select="selectPool"
+        @add="addPoolOpen = true"
       />
       <PoolDetail
         v-if="activePool?.address"
@@ -46,8 +48,9 @@
       </div>
       <StatsCard :stats="stats" :swaps="filteredSwaps" />
       <SimulatePanel @executed="onSwapsExecuted" />
-      <AddPoolPanel :pools="POOLS" @added="reloadDirectory" />
     </aside>
+
+    <AddPoolModal :open="addPoolOpen" :pools="POOLS" @close="addPoolOpen = false" @added="reloadDirectory" />
 
     <!-- Center: visualizations -->
     <section class="flex flex-col gap-4 min-h-0 overflow-hidden" :class="sidebarCollapsed ? 'col-span-9' : 'col-span-6'">
@@ -216,7 +219,7 @@ import PoolSelector from '@/components/PoolSelector.vue'
 import StatsCard from '@/components/StatsCard.vue'
 import PoolDetail from '@/components/PoolDetail.vue'
 import SimulatePanel from '@/components/SimulatePanel.vue'
-import AddPoolPanel from '@/components/AddPoolPanel.vue'
+import AddPoolModal from '@/components/AddPoolModal.vue'
 import ForceGraph from '@/components/ForceGraph.vue'
 import FlowSankey from '@/components/FlowSankey.vue'
 import SwapTimeline from '@/components/SwapTimeline.vue'
@@ -252,6 +255,7 @@ const activePool = shallowRef(ALL_POOLS)
 const highlightedTrader = ref('')
 const view = ref('network')
 const newSwapIds = ref([])
+const addPoolOpen = ref(false)
 
 // ---- UI preferences (per browser) --------------------------------------------------------
 
@@ -263,6 +267,7 @@ function toggleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value; wri
 function setWindow(id) { timeWindow.value = id; writePref('nameflow.timeWindow', id) }
 function onKey(e) {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+  if (document.querySelector('[role=dialog]')) return // a modal owns the keyboard
   if (e.key === '[') toggleSidebar()
   else if (e.key === '1') view.value = 'network'
   else if (e.key === '2') view.value = 'flow'

@@ -1,6 +1,14 @@
 <template>
   <div class="bg-surface-800 rounded-xl p-4">
-    <h2 class="text-sm font-medium text-gray-400 mb-3">Pools</h2>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-medium text-gray-400">Pools</h2>
+      <button
+        v-if="addable"
+        class="text-[11px] px-2 py-0.5 rounded-md bg-surface-700 hover:bg-surface-600 text-gray-200 transition-colors"
+        title="Register a new pool subname on ENS"
+        @click="$emit('add')"
+      >+ Add pool</button>
+    </div>
     <ul class="space-y-1.5">
       <li
         v-for="pool in pools"
@@ -34,7 +42,8 @@ defineProps({
   pools: { type: Array, required: true },
   activePool: { type: Object, default: null },
   counts: { type: Object, default: () => ({}) },
+  addable: { type: Boolean, default: false },
 })
 
-defineEmits(['select'])
+defineEmits(['select', 'add'])
 </script>
