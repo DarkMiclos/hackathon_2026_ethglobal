@@ -22,7 +22,7 @@
       />
       <div v-if="wallets.length" class="bg-surface-800 rounded-xl p-4">
         <h2 class="text-sm text-gray-400 mb-2">Wallets</h2>
-        <a v-for="wallet in wallets" :key="wallet.ensName" :href="`https://sepolia.etherscan.io/address/${wallet.address}`" target="_blank" rel="noopener" class="block text-xs text-gray-300 py-1 break-all">{{ wallet.ensName }}</a>
+        <a v-for="wallet in wallets" :key="wallet.ensName" :href="`https://sepolia.etherscan.io/address/${wallet.address}`" target="_blank" rel="noopener" class="flex items-center gap-2 text-xs text-gray-300 py-1 break-all"><img :src="walletAvatar(wallet.address)" alt="" class="w-7 h-7 rounded-full shrink-0" /><span>{{ wallet.ensName }}</span></a>
       </div>
       <StatsCard :stats="stats" :swaps="filteredSwaps" />
       <SimulatePanel @executed="onSwapsExecuted" />
@@ -126,6 +126,7 @@
 import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
 import { useEns, identityNames } from '@/composables/useEns'
 import { useMultiBaas } from '@/composables/useMultiBaas'
+import { walletAvatar } from '@/utils/walletAvatar'
 import { POOLS, setPools, ALL_POOLS, enrichSwap, swapValueUsdc, decodePrice, truncateAddr } from '@/config/pools'
 import PoolSelector from '@/components/PoolSelector.vue'
 import StatsCard from '@/components/StatsCard.vue'

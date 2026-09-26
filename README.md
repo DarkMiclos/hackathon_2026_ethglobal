@@ -84,3 +84,5 @@ The publisher skips unchanged records, simulates a resolver multicall, waits for
 ENS reads are cached for five minutes (one minute for missing records). Reload the page after changing records to read them immediately.
 
 The existing simulator has five wallets. Its main wallet and four derived sub-wallets are listed as Bob identities in the ENS directory. The simulator panel displays the resolved names while retaining addresses for copying. To register wallet names from a local public list (`[{"name":"…","address":"0x…"}]`), use `NAMEFLOW_WALLETS_FILE` with `scripts/register-ens-wallets.mjs` and the namespace owner's local `SEPOLIA_PRIVATE_KEY`. This creates missing subname registries and forward/managed reverse records; it does not generate or fund wallets.
+
+Wallet avatars use the Boring Avatars Bauhaus algorithm with the palette #651366, #a71a5b, #e7204e, #f76e2a, #f0c505. They are generated locally from normalized wallet addresses, remain stable when ENS names change, and do not use an external avatar API or ENS avatar records. Attribution and the upstream MIT license are in licenses/boring-avatars-MIT.txt.

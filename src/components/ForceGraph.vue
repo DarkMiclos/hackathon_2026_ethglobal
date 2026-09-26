@@ -19,6 +19,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as d3 from 'd3'
+import { walletAvatar } from '@/utils/walletAvatar'
 import { poolIcon } from '@/utils/poolIcon'
 import { formatAmount, truncateAddr } from '@/config/pools'
 
@@ -281,8 +282,8 @@ function updateGraph() {
     })
 
   nodeSel.select('.pool-icon')
-    .attr('href', d => d.type === 'pool' ? poolIcon(d.pool) : null)
-    .attr('display', d => d.type === 'pool' && poolIcon(d.pool) ? null : 'none')
+    .attr('href', d => d.type === 'pool' ? poolIcon(d.pool) : walletAvatar(d.id))
+    .attr('display', d => (d.type === 'pool' ? poolIcon(d.pool) : walletAvatar(d.id)) ? null : 'none')
     .attr('x', d => -d.r).attr('y', d => -d.r)
     .attr('width', d => d.r * 2).attr('height', d => d.r * 2)
     .style('clip-path', 'circle(50%)')
