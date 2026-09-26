@@ -8,7 +8,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 // Run the actual composable with fake RPC clients; these tests never send transactions.
 function harness({ rejectFirst = false, timeout = false } = {}) {
   const source = readFileSync(new URL('../src/composables/useSimulateSwaps.js', import.meta.url), 'utf8')
-    .replace(/^import [\s\S]*? from ['"][^'"]+['"]\n/gm, '')
+    .replace(/^import [\s\S]*? from ['"][^'"]+['"]\r?\n/gm, '')
     .replaceAll('import.meta.env', 'env').replace('export function', 'function')
   let pending = false
   let sends = 0

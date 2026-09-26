@@ -1,114 +1,197 @@
 # NameFlow — Live Uniswap Trading Dashboard
 
-A real-time Uniswap V3 swap dashboard built for **ETHGlobal Tokyo 2026**, powered by ENSv2 identity and MultiBaas event indexing.
+**NameFlow turns Uniswap V3 swap events into a live, ENS-named trading dashboard: MultiBaas indexes the pools, ENSv2 records name the traders and the watchlist, and D3 draws who is trading what, where, in real time.**
 
-## What it does
+Built at **ETHGlobal Tokyo 2026**. Sepolia testnet. Live demo: see the Vercel link on the repository page.
 
-- **Live trade tape** of Uniswap V3 pool swaps on Sepolia, with human-readable amounts, buy/sell side, and Etherscan links
-- **Trader × Pool network** (D3 force graph): pools pinned in a ring, traders sized by USDC-valued volume, buy/sell arrows, particles fly along a link when a new swap is indexed
-- **Flow view** (D3 Sankey): trader → pool → token received, so you can see where value moves
-- **Timeline view**: one lane per pool, every swap as a dot sized by value, coloured by side
-- **Pool focus**: click any pool (selector, graph node, volume bar, timeline lane) to filter everything and open a pool card with live `slot0()` price, liquidity, tick range, net token flow, indexing status, and top traders
-- **Trader focus**: click a trader anywhere to highlight their swaps across all views
-- **Price panel**: per-pool step chart with buy/sell markers and the live on-chain price; small multiples for all pools
-- **ENS names and avatars** read directly from Sepolia resolver records
-- **Add pool via ENS**: the namespace owner connects a browser wallet, pastes a Uniswap V3 pool address, and the app registers `<pair>.nameflow.eth` in the ENSv2 registry, publishes its address and metadata records, and appends it to the directory. Anyone else sees a read-only badge: ENSv2 access control, on screen
-- **Replay**: rebuild the indexed history swap by swap through every view, with speed control and a scrubber, so the dashboard moves even when the chain is quiet
-- **Time window** (15m / 1h / 24h / all) shared by all views, and a collapsible side panel for presenting (`[` toggles it, `1`/`2`/`3` switch views, `Esc` clears focus)
-- **Graph layout persists** across reloads within the tab
+- [1. What it is](#1-what-it-is)
+- [2. How it works](#2-how-it-works) · [Uniswap V3](#uniswap-v3-integration) · [MultiBaas](#how-multibaas-is-used) · [ENSv2](#how-ensv2-is-used) · [Visualizations](#visualizations) · [Swap simulator](#swap-simulator)
+- [3. Team](#3-team)
+- [4. Setup and testing](#4-setup-and-testing)
+- [5. Our experience with MultiBaas](#5-our-experience-with-multibaas)
+- [Uniswap developer feedback](FEEDBACK.md)
 
-## Stack
+---
 
-- **Vue 3** (Composition API) + Vite
-- **MultiBaas** (Curvegrid) — Swap event indexing, event queries, contract calls, chain status, via `@curvegrid/multibaas-sdk`
-- **viem** — ENSv2 resolution and the Sepolia swap simulator
-- **D3.js v7** + **d3-sankey** — force graph, Sankey, timeline, price and volume charts
-- **Tailwind CSS** — layout and styling
+## 1. What it is
 
-## How MultiBaas is used
+A single-page dashboard that watches a set of Uniswap V3 pools on Sepolia and shows every swap the moment it is indexed: a force-directed trader × pool network, a Sankey of value flow, a per-pool timeline, price and volume charts, a live trade tape, and a pool card with on-chain state. Traders and pools appear under their ENS names and avatars instead of hex addresses. The pool watchlist itself lives in ENSv2 text records under `nameflow.eth`, and the namespace owner can add a pool from the UI by registering a new subname. A built-in simulator drives real swaps from five ENS-named wallets so the screen is never idle, and a replay mode re-runs the indexed history when the chain is quiet.
+
+---
+
+## 2. How it works
+
+```
+Sepolia ── Uniswap V3 pools ── Swap / slot0 / liquidity
+   │                                   │
+   │  MultiBaas indexes Swap events    │  MultiBaas contract calls
+   ▼                                   ▼
+ Event query `swap_events` ──► useMultiBaas.js ──► Vue state ──► D3 views
+                                       ▲
+ nameflow.eth text records ──► useEns.js (names, avatars, watchlist)
+ SwapRouter02 ◄── useSimulateSwaps.js (five named wallets, real swaps)
+```
+
+### Uniswap V3 integration
+
+Contracts on Sepolia (chain id 11155111):
+
+| Contract | Address | Used for |
+|---|---|---|
+| `UniswapV3Pool` WETH/USDC 0.3% | `0x6Ce0896eAE6D4BD668fDe41BB784548fb8F59b50` | `Swap` events, `slot0()`, `liquidity()` |
+| `UniswapV3Pool` WETH/UNI 0.3% | `0x287B0e934ed0439E2a7b1d5F0FC25eA2c24b64f7` | same |
+| `UniswapV3Pool` USDC/UNI 0.3% | `0x349492f65C8B27efEF83456189b85D0Fa32afCcd` | same |
+| `SwapRouter02` | `0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E` | `exactInputSingle` from the simulator |
+| `UniswapV3Factory` | `0x0227628f3F023bb0B980b67D528571c95c6DaC1c` | linked in MultiBaas for pool discovery |
+| `WETH9` | `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14` | `deposit`, `approve` |
+| USDC (test) | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | 6-decimal quote asset |
+| UNI (test) | `0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984` | 18-decimal asset |
+
+Where to verify the integration in code:
+
+- **Swap event decoding**: [`src/config/pools.js`](src/config/pools.js) — `decodePrice` (line 31) converts `sqrtPriceX96` to a human price with decimals and base/quote orientation; `enrichSwap` (line 49) applies the Uniswap sign convention to `amount0`/`amount1` to derive side, tokens in/out and amounts; `swapValueUsdc` (line 83) values every swap in USDC for cross-pool comparison.
+- **Pool state reads**: [`src/composables/useMultiBaas.js`](src/composables/useMultiBaas.js) — `fetchPoolState` (line 185) calls `slot0()` and `liquidity()`; `fetchPoolAggregates` (line 141) runs a grouped aggregate over `Swap(address,address,int256,int256,uint160,uint128,int24)` (line 47).
+- **Real swaps**: [`src/composables/useSimulateSwaps.js`](src/composables/useSimulateSwaps.js) — `ROUTER_ABI` (line 34) and `executeSwaps` (line 300) quote each `exactInputSingle` with `simulateContract` (line 340), set `amountOutMinimum` to 99% of the quote (line 342), estimate gas, then send and confirm sequentially; `prepareWallets` (line 216) wraps ETH, approves the router and seeds USDC only where a wallet is short.
+- **Tests**: [`tests/swap-simulator.test.mjs`](tests/swap-simulator.test.mjs) runs the simulator against fake RPC clients (no transactions) and checks sequencing, slippage protection, fee-tier coverage and failure handling.
+
+### How MultiBaas is used
 
 All on-chain data on screen comes through the MultiBaas REST API using the official TypeScript SDK (`src/composables/useMultiBaas.js`). No RPC log scanning, no custom indexer.
 
 | Dashboard element | MultiBaas feature | SDK call |
 |---|---|---|
-| Trade tape, graph, timeline, price series | Saved **Event Query** `swap_events` over the three linked `UniswapV3Pool` contracts (paged, 50 rows per page) | `EventQueriesApi.executeEventQuery` |
+| Trade tape, graph, timeline, price series | Saved **Event Query** `swap_events` over the linked `UniswapV3Pool` contracts (paged, 50 rows per page) | `EventQueriesApi.executeEventQuery` |
 | "N swaps indexed" in the header | Event query record count | `EventQueriesApi.countEventQueryRecords` |
 | Pool card: net token flow, tick range, first/last block, last price | **Arbitrary event query** with server-side aggregators (`add`, `min`, `max`, `last`) grouped by `contract_address` | `EventQueriesApi.executeArbitraryEventQuery` |
-| Pool card and price panel: live price and tick, liquidity | **Contract calls** `slot0()` and `liquidity()` on each pool through its MultiBaas address alias | `ContractsApi.callContractFunction` |
+| Pool card and price panel: live price and tick, liquidity | **Contract calls** `slot0()` and `liquidity()` on each pool address | `ContractsApi.callContractFunction` |
 | Pool card: "indexed to block" | Per-contract event indexing status | `ContractsApi.getEventIndexingStatus` |
 | Header: chain head and base fee | Chain status | `ChainsApi.getChainStatus` |
+| Add pool (best effort) | Address alias + contract link so a new pool starts indexing | `AddressesApi.setAddress`, `ContractsApi.linkAddressContract` |
 
-### Request budget
+MultiBaas setup used for this deployment: the three pool addresses are linked to `UniswapV3Pool` contracts, and an event query named `swap_events` selects the `Swap` event inputs plus `block_number`, `tx_hash`, `contract_address` and `triggered_at`. Pool metadata is read from ENS at startup.
 
-The dashboard is designed to stay well inside API limits:
+**Request budget.** The dashboard is designed to stay well inside API limits:
 
 - An idle poll is **one request**: the `swap_events` record count, every 10 seconds (every 4 seconds for 90 seconds after the simulator broadcasts swaps).
 - Rows are fetched **only when the count moves**, and only the rows past the ones already held (the saved query returns rows in ascending block order with stable offsets). The first load takes the newest 200 rows in parallel 50-row pages.
 - Pool state (`slot0`, `liquidity`, indexer status) and the aggregated query are refreshed **only for pools that received new swaps**, never on a timer.
-- The chain head in the header refreshes once a minute.
-- Polling pauses while the tab is hidden, never overlaps an in-flight request, and backs off exponentially on errors.
-- The header shows a live count of MultiBaas requests made since page load.
+- The chain head in the header refreshes once a minute. Polling pauses while the tab is hidden, never overlaps an in-flight request, and backs off exponentially on errors.
+- The header shows a live count of MultiBaas requests made since page load. Steady state with no trading is about 7 requests per minute.
 
-Steady state with no trading is about 7 requests per minute. ENS lookups go to the Sepolia RPC, not MultiBaas, and cache both hits and misses.
+In development the Vite dev server proxies `/multibaas-api` to the deployment. In production an edge function (`api/multibaas/[...path].js`) proxies the read endpoints and injects the API key server-side, so the key never ships in the bundle and no CORS origin is needed.
 
-In development the Vite dev server proxies `/multibaas-api` to the deployment to avoid CORS. If MultiBaas is not configured or unreachable the UI falls back to demo data and says so in the header.
+### How ENSv2 is used
 
-## Which ENSv2 features we used
+The app starts from `nameflow.eth` on Sepolia (`src/composables/useEns.js`, `loadDirectory` at line 70):
 
-- **Hierarchical subnames**: `pool-name.nameflow.eth` for each watched pool
-- **Resolver records**: pool addresses, fee tiers, and pair metadata stored on-chain
-- **Universal Resolver V2**: forward + reverse resolution on Sepolia
-- **Enhanced Access Control**: role-based permissions for who can add pools
+- **Watchlist in text records.** The `nameflow:directory` record on `nameflow.eth` lists pool and wallet subnames. Each pool subname (for example `weth-usdc-3000.nameflow.eth`) resolves to the pool address and carries a `nameflow:pool` record with pair metadata and MultiBaas labels. Token addresses and fee tiers are verified against the pool contract before use; invalid records are rejected.
+- **Names for traders.** Every trader address is resolved through a managed reverse lookup (`<address>.lookup.nameflow.eth` → `nameflow:name`), accepted only if forward resolution matches, with a standard primary-name fallback (`resolveAddress`, line 45). The five simulator wallets are `main.bob.nameflow.eth` and `sub-1..4.bob.nameflow.eth`.
+- **Avatars.** Pool icons prefer the ENS `avatar` record; wallets use locally generated Bauhaus avatars (Boring Avatars algorithm, MIT, see `licenses/`).
+- **Subname registration from the UI.** "+ Add pool" opens a dialog (`src/components/AddPoolModal.vue`, `src/composables/useEnsAdmin.js`). The connected wallet is checked against the ENSv2 owner of `nameflow.eth`; only the owner can proceed (that check is the visible piece of ENSv2 access control). `publishPool` (line 157) registers the subname in the namespace's ENSv2 registry (`register`, line 179), then publishes the address record, the `nameflow:pool` metadata, the optional `avatar` record and the updated directory in one resolver `multicall` (line 211). Every write is simulated before the wallet signs.
+- **Scripts** in `scripts/` publish and verify the directory and register wallet names from the command line (Node 20+).
 
-## Swap simulator
+If the ENS directory cannot be read at startup, the dashboard falls back to a built-in list of the same three pools and shows a warning instead of a blank screen.
 
-The **Simulate Swaps** panel derives five wallets from a test private key, funds the sub-wallets, wraps ETH, approves the Uniswap router, and broadcasts swaps across all three pools so the dashboard has live traffic during a demo. Use a throwaway Sepolia key with faucet funds only: the key is bundled into the client through `VITE_TEST_PRIVATE_KEY`.
+### Visualizations
 
-## Deploying to Vercel
+- **Network** (D3 force graph): pools pinned in a ring, traders sized by USDC-valued volume, buy/sell arrows, particles fly along a link and the pool pulses when a new swap is indexed. Hover to focus, click a pool to filter, click a trader to highlight them everywhere. Layout persists across reloads.
+- **Flow** (D3 Sankey): trader → pool → token received.
+- **Timeline**: one lane per pool, every swap a dot sized by value and coloured by side.
+- **Prices**: per-pool step chart with buy/sell markers and the live `slot0` price; small multiples for the combined view.
+- **Volume per pool**, stacked buy/sell, USDC-valued.
+- **Pool card**: live price, liquidity, tick range strip, net token flow, indexing status, top traders.
+- **Replay**: re-run the indexed history through every view with a scrubber and speed control.
+- **Time window** (15m / 1h / 24h / all), collapsible side panel for presenting (`[`), `1`/`2`/`3` switch views, `Esc` clears focus.
 
-The repo includes `api/multibaas/[...path].js`, an edge function that proxies `/api/multibaas/*` to the MultiBaas deployment and injects the API key server-side. Production builds call MultiBaas through it by default, so:
+### Swap simulator
 
-- no CORS origin has to be registered in MultiBaas, and
-- the key is never shipped in the bundle.
+The **Simulate Swaps** panel derives five wallets from a throwaway private key and drives real Uniswap swaps so the dashboard has live traffic during a demo. Readiness (ETH for gas, WETH, USDC, router allowances) is read from chain in one multicall, so a page reload never forgets that wallets are prepared. **Prepare wallets** funds, wraps, approves and seeds USDC only where a wallet is short. **Execute** runs one round: one swap per supported pool per wallet, direction alternating per wallet and per round so pools stay close to net-neutral, each swap quoted, slippage-protected and confirmed before the next.
 
-Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) in the Vercel project settings and deploy. `vercel.json` rewrites every non-API path to `index.html` for the Vue router. The proxy forwards only the read endpoints the dashboard uses, and only for requests coming from the site itself (it checks `Origin`, `Referer`, and `Sec-Fetch-Site`), so opening a proxy URL directly in a browser or with curl returns 403. To let another origin use it, set `MULTIBAAS_PROXY_ALLOWED_ORIGINS` to a comma-separated list. To call MultiBaas directly instead, set `VITE_MULTIBAAS_PROXY=false`, ship `VITE_MULTIBAAS_URL` and `VITE_MULTIBAAS_API_KEY`, and add the site origin under MultiBaas Admin > CORS.
+---
 
-## Setup
+## 3. Team
+
+| | GitHub | Discord | X / Twitter |
+|---|---|---|---|
+| **Miklós Lockár** | [@DarkMiclos](https://github.com/DarkMiclos) | @darkmiclos | [@asd12346477221](https://x.com/asd12346477221) |
+| **Yuma Kamei** | [@gatolife-creator](https://github.com/gatolife-creator) | gatolife | [@gatolife81](https://x.com/gatolife81) |
+
+---
+
+## 4. Setup and testing
+
+### Prerequisites
+
+- Node.js 20 or newer (22 recommended; the ENS scripts use `import.meta.resolve`)
+- A MultiBaas deployment on Sepolia with the pools linked and the `swap_events` query (see above), plus a **read-only** API key
+- Optional: a Sepolia RPC URL (Alchemy, Infura, dRPC). The public default works but is slow.
+
+### Run locally
 
 ```bash
-git clone https://github.com/YOUR_USER/nameflow-dashboard.git
-cd nameflow-dashboard
+git clone https://github.com/DarkMiclos/hackathon_2026_ethglobal.git
+cd hackathon_2026_ethglobal
 npm install
 cp .env.example .env
-# Fill in your MultiBaas deployment URL and API key (and optionally a throwaway test key)
+```
+
+Fill in `.env`:
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `VITE_MULTIBAAS_URL` | yes | `https://<deployment>.multibaas.com` |
+| `VITE_MULTIBAAS_API_KEY` | yes | read-only key; without it the app runs on demo data and says so in the header |
+| `VITE_SEPOLIA_RPC_URL` | recommended | used for ENS resolution and the simulator |
+| `VITE_TEST_PRIVATE_KEY` | only for the simulator | a **throwaway** key; it is bundled into the browser build |
+
+```bash
 npm run dev
 ```
 
-MultiBaas setup used for this deployment: the three pool addresses are linked to `UniswapV3Pool` contracts under the aliases `wethusdcpool1`, `wethunipool1`, and `usdcuni3pool1`, and an event query named `swap_events` selects the `Swap` event inputs plus `block_number`, `tx_hash`, `contract_address`, and `triggered_at`. Pool and token metadata is loaded from ENS text records; `src/config/pools.js` contains only the runtime collection and calculation helpers.
+Open http://localhost:5173. The header dot is green when MultiBaas is live, amber on demo data, red if the deployment is unreachable. The Vite dev server proxies `/multibaas-api` to MultiBaas, so no CORS setup is needed locally.
 
-## Team
-
-Built at ETHGlobal Tokyo 2026.
-
-## ENS directory and avatars
-
-The app starts with `nameflow.eth` on Sepolia. Its `nameflow:directory` text record contains a versioned list of pool and wallet names. Each pool's `nameflow:pool` text record contains pair metadata and MultiBaas aliases. Addresses come from ENS forward resolution and pool token addresses and fee tiers are verified against the pool contract. Missing or invalid directory records show an error rather than a static identity list.
-
-Pool icons prefer the ENS `avatar` record through viem. Until avatar URLs are published, the UI uses the prepared local image matching the resolved token pair. This image fallback contains no ENS names or wallet/pool addresses. The three prepared PNGs are in `public/pool-avatars/`; they have not been published to GitHub and their avatar records have not been set. After hosting them at public HTTPS URLs, add each URL as the corresponding pool's `avatar` in the publication seed and run the publisher. Do not use a localhost URL in an ENS avatar record.
-
-Publication uses an external seed at `~/.config/nameflow/ens-directory-seed.json` (override with `NAMEFLOW_SEED_FILE`). The seed is only an administrative publication input; the frontend never reads it. Set `SEPOLIA_PRIVATE_KEY` locally for publication; never commit the key or expose it through a `VITE_` variable.
+### Run the tests
 
 ```bash
-node scripts/publish-ens-directory.mjs
-node scripts/verify-ens-directory.mjs
+npm test
 ```
 
-The scripts need Node 20 or newer (`import.meta.resolve`). If the ENS directory cannot be read at startup, the dashboard falls back to the built-in list of the same three pools and shows a warning instead of a blank screen.
+Runs the simulator tests with Node's built-in runner against fake RPC clients. No network, no transactions, no key needed.
 
-The publisher skips unchanged records, simulates a resolver multicall, waits for confirmation, and verifies the resulting records. The verifier loads the same ENS directory as the app and checks forward and managed reverse mappings. Managed reverse lookup reads `nameflow:name` at `<address-without-0x>.lookup.nameflow.eth` and accepts it only if forward resolution matches the address. This namespace lookup is separate from an ENS primary reverse name. Standard primary reverse resolution is used as a fallback.
+### Run test transactions (simulator)
 
-ENS reads are cached for five minutes (one minute for missing records). Reload the page after changing records to read them immediately.
+1. Set `VITE_TEST_PRIVATE_KEY` in `.env` to a fresh key that holds nothing valuable and restart `npm run dev`.
+2. Open **Simulate Swaps**. The main wallet address is shown with a copy button. Send it about **0.3 Sepolia ETH** from a faucet (Alchemy, Infura, Google Cloud faucets all work). The panel tells you the exact shortfall.
+3. Click **Refresh**, then **Prepare wallets**. This funds the four sub-wallets, wraps ETH to WETH, approves the router for WETH/USDC/UNI and seeds USDC by swapping a little WETH. It only does the steps a wallet is missing, so it is safe to run again.
+4. Click **Execute N swaps**. Each swap is quoted, sent and confirmed in turn; progress and transaction hashes appear in the log. Within about 10–30 seconds MultiBaas indexes the events and they animate into the dashboard.
+5. Run another round any time. Direction alternates each round, so repeated rounds do not push the tiny testnet pools in one direction.
 
-The existing simulator has five wallets. Its main wallet and four derived sub-wallets are listed as Bob identities in the ENS directory. The simulator panel displays the resolved names while retaining addresses for copying. To register wallet names from a local public list (`[{"name":"…","address":"0x…"}]`), use `NAMEFLOW_WALLETS_FILE` with `scripts/register-ens-wallets.mjs` and the namespace owner's local `SEPOLIA_PRIVATE_KEY`. This creates missing subname registries and forward/managed reverse records; it does not generate or fund wallets.
+If you want the simulator wallets to show ENS names, they must be listed in the `nameflow.eth` directory (the five wallets derived from the team's key already are). Other keys will show as addresses.
 
-Wallet avatars use the Boring Avatars Bauhaus algorithm with the palette #651366, #a71a5b, #e7204e, #f76e2a, #f0c505. They are generated locally from normalized wallet addresses, remain stable when ENS names change, and do not use an external avatar API or ENS avatar records. Attribution and the upstream MIT license are in licenses/boring-avatars-MIT.txt.
+### ENS directory administration (owner only)
+
+The watchlist and wallet names are published with the namespace owner's key, never through a `VITE_` variable:
+
+```bash
+SEPOLIA_PRIVATE_KEY=0x… node scripts/publish-ens-directory.mjs   # publishes changed records from ~/.config/nameflow/ens-directory-seed.json
+node scripts/verify-ens-directory.mjs                              # reads the directory exactly as the app does and checks every name
+NAMEFLOW_WALLETS_FILE=wallets.json SEPOLIA_PRIVATE_KEY=0x… node scripts/register-ens-wallets.mjs
+```
+
+Or use **+ Add pool** in the UI with the owner wallet connected in MetaMask (Sepolia). ENS reads are cached for five minutes (one minute for misses); reload after publishing.
+
+### Deploy to Vercel
+
+Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) in the Vercel project. Production builds call MultiBaas through `api/multibaas/[...path].js`, which forwards only the read endpoints, injects the key, and refuses requests from other origins. `vercel.json` rewrites non-API paths to `index.html` for the router. To call MultiBaas directly instead, set `VITE_MULTIBAAS_PROXY=false`, ship the `VITE_MULTIBAAS_*` variables, and add the site origin under MultiBaas Admin → CORS.
+
+---
+
+## 5. Our experience with MultiBaas
+
+We really loved the idea of turning smart contracts into callable API endpoints. It let us build a new frontend like this one in a very short time: indexing the pools, querying events with server-side aggregation, and reading `slot0` and `liquidity` were each a single SDK call, and the saved event query meant we never wrote an indexer.
+
+Sadly we did not have enough time to explore all of MultiBaas thoroughly. We had planned to integrate cloud wallets (so the simulator's key would never touch the browser) and webhooks (to replace polling with push), and both remain next steps rather than shipped features.
+
+Personally, using Curvegrid and MultiBaas reminded me of when I was first learning how APIs work and how to use them, so it was quite nostalgic. The documentation is good, with clear examples. Two things that cost us a little time and might help other teams: the event query page size cap of 50 rows is not obvious until you hit a 400 "invalid request", and the API key roles could use a more prominent "make this one read-only for the frontend" pointer.
+
+We would love to connect with the team more. As a test automation engineer myself, I am interested in what kind of automation tests exist for a system like this.
