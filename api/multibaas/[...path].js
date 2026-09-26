@@ -6,12 +6,42 @@
  * deployed site and keeps the key out of the client bundle.
  *
  * Environment variables (set in the Vercel project, not prefixed with VITE_):
- *   MULTIBAAS_URL      https://<deployment>.multibaas.com
- *   MULTIBAAS_API_KEY  a read-only MultiBaas API key
+ *   MULTIBAAS_URL                    https://<deployment>.multibaas.com
+ *   MULTIBAAS_API_KEY                a read-only MultiBaas API key
+ *   MULTIBAAS_PROXY_ALLOWED_ORIGINS  optional, comma-separated extra origins allowed to call
+ *                                    the proxy (the deployment's own origin is always allowed)
  */
 export const config = { runtime: 'edge' }
 
 const ALLOWED_METHODS = new Set(['GET', 'POST', 'OPTIONS'])
+
+/**
+ * Only the dashboard itself may use the proxy. Browsers mark every request with
+ * Sec-Fetch-Site and send Origin/Referer on fetches, so a same-origin page always passes;
+ * curl, scripts, or other sites hitting the URL directly are refused. This stops a leaked
+ * proxy URL from burning the MultiBaas request budget.
+ */
+function isAllowedOrigin(request, incoming) {
+  const extra = (process.env.MULTIBAAS_PROXY_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+  const allowed = new Set([incoming.origin, ...extra])
+
+  const origin = request.headers.get('origin')
+  if (origin) return allowed.has(origin)
+
+  const referer = request.headers.get('referer')
+  if (referer) {
+    try {
+      return allowed.has(new URL(referer).origin)
+    } catch {
+      return false
+    }
+  }
+
+  return request.headers.get('sec-fetch-site') === 'same-origin'
+}
 
 export default async function handler(request) {
   if (!ALLOWED_METHODS.has(request.method)) {
@@ -24,6 +54,10 @@ export default async function handler(request) {
   }
 
   const incoming = new URL(request.url)
+  if (!isAllowedOrigin(request, incoming)) {
+    return Response.json({ status: 403, message: 'Origin not allowed through the proxy' }, { status: 403 })
+  }
+
   const path = incoming.pathname.replace(/^\/api\/multibaas/, '')
   // Only the read surface the dashboard uses is forwarded. Anything else is refused so a
   // leaked proxy URL cannot be used to administer the deployment.

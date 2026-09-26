@@ -71,7 +71,7 @@ The repo includes `api/multibaas/[...path].js`, an edge function that proxies `/
 - no CORS origin has to be registered in MultiBaas, and
 - the key is never shipped in the bundle.
 
-Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) in the Vercel project settings and deploy. `vercel.json` rewrites every non-API path to `index.html` for the Vue router. The proxy forwards only the read endpoints the dashboard uses. To call MultiBaas directly instead, set `VITE_MULTIBAAS_PROXY=false`, ship `VITE_MULTIBAAS_URL` and `VITE_MULTIBAAS_API_KEY`, and add the site origin under MultiBaas Admin > CORS.
+Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) in the Vercel project settings and deploy. `vercel.json` rewrites every non-API path to `index.html` for the Vue router. The proxy forwards only the read endpoints the dashboard uses, and only for requests coming from the site itself (it checks `Origin`, `Referer`, and `Sec-Fetch-Site`), so opening a proxy URL directly in a browser or with curl returns 403. To let another origin use it, set `MULTIBAAS_PROXY_ALLOWED_ORIGINS` to a comma-separated list. To call MultiBaas directly instead, set `VITE_MULTIBAAS_PROXY=false`, ship `VITE_MULTIBAAS_URL` and `VITE_MULTIBAAS_API_KEY`, and add the site origin under MultiBaas Admin > CORS.
 
 ## Setup
 
