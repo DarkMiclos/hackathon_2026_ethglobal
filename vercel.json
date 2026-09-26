@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/multibaas/:path*", "destination": "/api/multibaas?mbpath=:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

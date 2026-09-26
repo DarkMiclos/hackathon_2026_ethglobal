@@ -32,7 +32,7 @@ import { POOLS } from '@/config/pools'
 
 const MULTIBAAS_URL_RAW = (import.meta.env.VITE_MULTIBAAS_URL || '').replace(/\/+$/, '')
 const API_KEY = import.meta.env.VITE_MULTIBAAS_API_KEY || ''
-// Optional: a same-origin proxy that injects the API key server-side (see api/multibaas/[...path].js
+// Optional: a same-origin proxy that injects the API key server-side (see api/multibaas.js
 // for the Vercel version). It avoids CORS and keeps the key out of the bundle. Enabled by default
 // in production builds; set VITE_MULTIBAAS_PROXY=false to call the deployment directly instead.
 const USE_PROXY = import.meta.env.DEV

@@ -78,7 +78,7 @@ MultiBaas setup used for this deployment: the three pool addresses are linked to
 - The chain head in the header refreshes once a minute. Polling pauses while the tab is hidden, never overlaps an in-flight request, and backs off exponentially on errors.
 - The header shows a live count of MultiBaas requests made since page load. Steady state with no trading is about 7 requests per minute.
 
-In development the Vite dev server proxies `/multibaas-api` to the deployment. In production an edge function (`api/multibaas/[...path].js`) proxies the read endpoints and injects the API key server-side, so the key never ships in the bundle and no CORS origin is needed.
+In development the Vite dev server proxies `/multibaas-api` to the deployment. In production an edge function (`api/multibaas.js`) proxies the read endpoints and injects the API key server-side, so the key never ships in the bundle and no CORS origin is needed.
 
 ### How ENSv2 is used
 
@@ -182,7 +182,7 @@ Or use **+ Add pool** in the UI with the owner wallet connected in MetaMask (Sep
 
 ### Deploy to Vercel
 
-Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) and `VITE_SEPOLIA_RPC_URL` (a dedicated Sepolia RPC; the public ones rate-limit) in the Vercel project, then redeploy (environment variables only apply to builds made after they are set). Production builds call MultiBaas through `api/multibaas/[...path].js`, which forwards only the read endpoints, injects the key, and refuses requests from other origins. `vercel.json` rewrites non-API paths to `index.html` for the router.
+Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) and `VITE_SEPOLIA_RPC_URL` (a dedicated Sepolia RPC; the public ones rate-limit) in the Vercel project, then redeploy (environment variables only apply to builds made after they are set). Production builds call MultiBaas through `api/multibaas.js`, which forwards only the read endpoints, injects the key, and refuses requests from other origins. `vercel.json` rewrites non-API paths to `index.html` for the router.
 
 Check the deployment with `https://<your-site>/api/health`. It must return JSON with `"proxyConfigured": true`. If it returns Vercel's `NOT_FOUND` page, the `api/` directory is not being built as functions: confirm the project's **Root Directory** is the repository root, the **Framework Preset** is Vite, and no legacy `builds` override is configured. While the function is missing, the app automatically falls back to calling MultiBaas directly **if** `VITE_MULTIBAAS_URL` and `VITE_MULTIBAAS_API_KEY` are set for the build and the site origin is registered under MultiBaas Admin → CORS. Only do that with a **read-only** key: anything shipped in a `VITE_` variable is visible to every visitor.
 

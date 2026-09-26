@@ -1,8 +1,10 @@
 /**
- * Vercel serverless proxy for MultiBaas.
+ * Vercel edge proxy for MultiBaas.
  *
- * The browser calls /api/multibaas/<path> on the same origin; this function forwards the
- * request to the MultiBaas deployment and injects the API key. That solves CORS on the
+ * The browser calls /api/multibaas/<path> on the same origin. vercel.json rewrites that to
+ * this function with the remainder in the `mbpath` query parameter (catch-all function files
+ * were not routed reliably on Vercel), and the function forwards the request to the MultiBaas
+ * deployment with the API key injected. That solves CORS on the
  * deployed site and keeps the key out of the client bundle.
  *
  * Environment variables (set in the Vercel project, not prefixed with VITE_):
@@ -58,7 +60,10 @@ export default async function handler(request) {
     return Response.json({ status: 403, message: 'Origin not allowed through the proxy' }, { status: 403 })
   }
 
-  const path = incoming.pathname.replace(/^\/api\/multibaas/, '')
+  // Path arrives via the rewrite (?mbpath=api/v0/...) or, if hit directly, from the URL itself.
+  const mbpath = incoming.searchParams.get('mbpath')
+  incoming.searchParams.delete('mbpath')
+  const path = mbpath ? `/${mbpath.replace(/^\/+/, '')}` : incoming.pathname.replace(/^\/api\/multibaas/, '')
   // Only the read surface the dashboard uses is forwarded. Anything else is refused so a
   // leaked proxy URL cannot be used to administer the deployment.
   if (!/^\/api\/v0\/(queries(\/[A-Za-z0-9_-]+\/(results|count))?|chains\/ethereum\/(status|addresses\/[A-Za-z0-9_-]+\/contracts\/[A-Za-z0-9_-]+\/(status|methods\/(slot0|liquidity|token0|token1|fee))))$/.test(path)) {
