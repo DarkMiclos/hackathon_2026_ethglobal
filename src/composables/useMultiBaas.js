@@ -32,16 +32,24 @@ import { POOLS } from '@/config/pools'
 
 const MULTIBAAS_URL_RAW = (import.meta.env.VITE_MULTIBAAS_URL || '').replace(/\/+$/, '')
 const API_KEY = import.meta.env.VITE_MULTIBAAS_API_KEY || ''
+// Optional: a same-origin proxy that injects the API key server-side (see api/multibaas/[...path].js
+// for the Vercel version). It avoids CORS and keeps the key out of the bundle. Enabled by default
+// in production builds; set VITE_MULTIBAAS_PROXY=false to call the deployment directly instead.
+const USE_PROXY = import.meta.env.DEV
+  ? false
+  : (import.meta.env.VITE_MULTIBAAS_PROXY ?? 'true') !== 'false'
 const BASE_PATH = import.meta.env.DEV
   ? `${window.location.origin}/multibaas-api/api/v0`
-  : `${MULTIBAAS_URL_RAW}/api/v0`
+  : USE_PROXY
+    ? `${window.location.origin}/api/multibaas/api/v0`
+    : `${MULTIBAAS_URL_RAW}/api/v0`
 
 const SWAP_SIGNATURE = 'Swap(address,address,int256,int256,uint160,uint128,int24)'
 const PAGE_SIZE = 50   // MultiBaas rejects event query pages larger than this
 const MAX_ROWS = 200   // rows kept in memory / drawn
-const configured = Boolean(MULTIBAAS_URL_RAW && API_KEY)
+const configured = USE_PROXY || Boolean(MULTIBAAS_URL_RAW && API_KEY)
 
-const config = new Configuration({ basePath: BASE_PATH, accessToken: API_KEY })
+const config = new Configuration({ basePath: BASE_PATH, accessToken: USE_PROXY ? undefined : API_KEY })
 const eventQueries = new EventQueriesApi(config)
 const contracts = new ContractsApi(config)
 const chains = new ChainsApi(config)
@@ -271,12 +279,18 @@ const DEMO_TRADERS = [
   '0xfedcba9876543210fedcba9876543210fedcba98',
 ]
 const ROUTER = '0x3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e'
-const DEMO_SQRT = {
-  [POOLS[0].address]: 446471520828176796453178840143969n,
-  [POOLS[1].address]: 313016716270753929732728202229n,
-  [POOLS[2].address]: 106450525145725929220053357821909n,
+
+// Demo prices derived from pool metadata so any pool loaded from ENS gets a plausible series.
+function demoPrice(pool) {
+  return pool.quote.symbol === 'USDC' ? (pool.base.symbol === 'WETH' ? 31400 : 553000) : 15.6
 }
-const DEMO_TICK = { [POOLS[0].address]: 172744, [POOLS[1].address]: 27479, [POOLS[2].address]: 144069 }
+function demoSqrt(pool) {
+  const token1PerToken0 = pool.base === pool.token0 ? demoPrice(pool) : 1 / demoPrice(pool)
+  return BigInt(Math.round(Math.sqrt(token1PerToken0 / 10 ** (pool.token0.decimals - pool.token1.decimals)) * 2 ** 96))
+}
+function demoTick(pool) {
+  return Math.round(Math.log((Number(demoSqrt(pool)) / 2 ** 96) ** 2) / Math.log(1.0001))
+}
 
 function seeded(i) {
   const x = Math.sin(i * 9301 + 49297) * 233280
@@ -286,33 +300,22 @@ function seeded(i) {
 function getDummySwaps() {
   const now = Math.floor(Date.now() / 1000)
   const n = 36
-  const drift = { [POOLS[0].address]: 0, [POOLS[1].address]: 0, [POOLS[2].address]: 0 }
+  if (!POOLS.length) return []
+  const drift = Object.fromEntries(POOLS.map((p) => [p.address, 0]))
   const out = []
   for (let i = 0; i < n; i++) {
-    const pool = POOLS[Math.floor(seeded(i) * 3)]
+    const pool = POOLS[Math.floor(seeded(i) * POOLS.length)]
     const trader = DEMO_TRADERS[Math.floor(seeded(i + 100) * DEMO_TRADERS.length)]
     const sell = seeded(i + 200) > 0.5
     const size = 0.5 + seeded(i + 300) * 2
     drift[pool.address] += (sell ? 1 : -1) * size * 0.0006
-    const sqrt = DEMO_SQRT[pool.address] * BigInt(Math.round((1 + drift[pool.address]) * 1e6)) / 1000000n
+    const sqrt = demoSqrt(pool) * BigInt(Math.round((1 + drift[pool.address]) * 1e6)) / 1000000n
 
-    let amount0, amount1
-    if (pool === POOLS[0]) {
-      const weth = 0.001 * size
-      const usdc = weth * 31400
-      amount1 = BigInt(Math.round(weth * 1e18)) * (sell ? 1n : -1n)
-      amount0 = BigInt(Math.round(usdc * 1e6)) * (sell ? -1n : 1n)
-    } else if (pool === POOLS[1]) {
-      const uni = 0.00006 * size
-      const weth = uni * 15.6
-      amount0 = BigInt(Math.round(uni * 1e18)) * (sell ? 1n : -1n)
-      amount1 = BigInt(Math.round(weth * 1e18)) * (sell ? -1n : 1n)
-    } else {
-      const uni = 0.00001 * size
-      const usdc = uni * 553000
-      amount1 = BigInt(Math.round(uni * 1e18)) * (sell ? 1n : -1n)
-      amount0 = BigInt(Math.round(usdc * 1e6)) * (sell ? -1n : 1n)
-    }
+    const baseAmount = (pool.base.symbol === 'WETH' ? 0.001 : 0.00006) * size
+    const quoteAmount = baseAmount * demoPrice(pool)
+    const baseIsToken0 = pool.base === pool.token0
+    const amount0 = BigInt(Math.round((baseIsToken0 ? baseAmount : quoteAmount) * 10 ** pool.token0.decimals)) * ((baseIsToken0 === sell) ? 1n : -1n)
+    const amount1 = BigInt(Math.round((baseIsToken0 ? quoteAmount : baseAmount) * 10 ** pool.token1.decimals)) * ((baseIsToken0 === sell) ? -1n : 1n)
 
     out.push({
       id: `demo-${i}`,
@@ -323,7 +326,7 @@ function getDummySwaps() {
       amount1: amount1.toString(),
       sqrtPriceX96: sqrt.toString(),
       liquidity: '12261438416671504',
-      tick: DEMO_TICK[pool.address] + Math.round(drift[pool.address] * 20000),
+      tick: demoTick(pool) + Math.round(drift[pool.address] * 20000),
       blockNumber: 11784500 + i * 3,
       txHash: `0x${(i + 1).toString(16).padStart(64, 'a')}`,
       contractAddress: pool.address,
@@ -339,9 +342,9 @@ function demoAggregates() {
     out[p.address] = {
       netAmount0: '0',
       netAmount1: '0',
-      lastSqrtPrice: DEMO_SQRT[p.address].toString(),
-      minTick: DEMO_TICK[p.address] - 40,
-      maxTick: DEMO_TICK[p.address] + 40,
+      lastSqrtPrice: demoSqrt(p).toString(),
+      minTick: demoTick(p) - 40,
+      maxTick: demoTick(p) + 40,
       firstBlock: 11784500,
       lastBlock: 11784608,
     }
@@ -351,12 +354,10 @@ function demoAggregates() {
 
 function demoPoolState(pool) {
   return {
-    sqrtPriceX96: DEMO_SQRT[pool.address].toString(),
-    tick: DEMO_TICK[pool.address],
+    sqrtPriceX96: demoSqrt(pool).toString(),
+    tick: demoTick(pool),
     unlocked: true,
-    liquidity: pool === POOLS[0]
-      ? '12261438416671504'
-      : pool === POOLS[1] ? '184641713400945153448' : '16242178069',
+    liquidity: '12261438416671504',
     indexedToBlock: 11784934,
     startBlock: 11784145,
     isProcessingPastLogs: false,

@@ -11,7 +11,11 @@ A real-time Uniswap V3 swap dashboard built for **ETHGlobal Tokyo 2026**, powere
 - **Pool focus**: click any pool (selector, graph node, volume bar, timeline lane) to filter everything and open a pool card with live `slot0()` price, liquidity, tick range, net token flow, indexing status, and top traders
 - **Trader focus**: click a trader anywhere to highlight their swaps across all views
 - **Price panel**: per-pool step chart with buy/sell markers and the live on-chain price; small multiples for all pools
-- **ENSv2 names** for traders and pools (in progress)
+- **ENS names and avatars** read directly from Sepolia resolver records
+- **Add pool via ENS**: the namespace owner connects a browser wallet, pastes a Uniswap V3 pool address, and the app registers `<pair>.nameflow.eth` in the ENSv2 registry, publishes its address and metadata records, and appends it to the directory. Anyone else sees a read-only badge: ENSv2 access control, on screen
+- **Replay**: rebuild the indexed history swap by swap through every view, with speed control and a scrubber, so the dashboard moves even when the chain is quiet
+- **Time window** (15m / 1h / 24h / all) shared by all views, and a collapsible side panel for presenting (`[` toggles it, `1`/`2`/`3` switch views, `Esc` clears focus)
+- **Graph layout persists** across reloads within the tab
 
 ## Stack
 
@@ -60,6 +64,15 @@ In development the Vite dev server proxies `/multibaas-api` to the deployment to
 
 The **Simulate Swaps** panel derives five wallets from a test private key, funds the sub-wallets, wraps ETH, approves the Uniswap router, and broadcasts swaps across all three pools so the dashboard has live traffic during a demo. Use a throwaway Sepolia key with faucet funds only: the key is bundled into the client through `VITE_TEST_PRIVATE_KEY`.
 
+## Deploying to Vercel
+
+The repo includes `api/multibaas/[...path].js`, an edge function that proxies `/api/multibaas/*` to the MultiBaas deployment and injects the API key server-side. Production builds call MultiBaas through it by default, so:
+
+- no CORS origin has to be registered in MultiBaas, and
+- the key is never shipped in the bundle.
+
+Set `MULTIBAAS_URL` and `MULTIBAAS_API_KEY` (no `VITE_` prefix) in the Vercel project settings and deploy. `vercel.json` rewrites every non-API path to `index.html` for the Vue router. The proxy forwards only the read endpoints the dashboard uses. To call MultiBaas directly instead, set `VITE_MULTIBAAS_PROXY=false`, ship `VITE_MULTIBAAS_URL` and `VITE_MULTIBAAS_API_KEY`, and add the site origin under MultiBaas Admin > CORS.
+
 ## Setup
 
 ```bash
@@ -71,8 +84,31 @@ cp .env.example .env
 npm run dev
 ```
 
-MultiBaas setup used for this deployment: the three pool addresses are linked to `UniswapV3Pool` contracts under the aliases `wethusdcpool1`, `wethunipool1`, and `usdcuni3pool1`, and an event query named `swap_events` selects the `Swap` event inputs plus `block_number`, `tx_hash`, `contract_address`, and `triggered_at`. Pool and token metadata lives in `src/config/pools.js`.
+MultiBaas setup used for this deployment: the three pool addresses are linked to `UniswapV3Pool` contracts under the aliases `wethusdcpool1`, `wethunipool1`, and `usdcuni3pool1`, and an event query named `swap_events` selects the `Swap` event inputs plus `block_number`, `tx_hash`, `contract_address`, and `triggered_at`. Pool and token metadata is loaded from ENS text records; `src/config/pools.js` contains only the runtime collection and calculation helpers.
 
 ## Team
 
 Built at ETHGlobal Tokyo 2026.
+
+## ENS directory and avatars
+
+The app starts with `nameflow.eth` on Sepolia. Its `nameflow:directory` text record contains a versioned list of pool and wallet names. Each pool's `nameflow:pool` text record contains pair metadata and MultiBaas aliases. Addresses come from ENS forward resolution and pool token addresses and fee tiers are verified against the pool contract. Missing or invalid directory records show an error rather than a static identity list.
+
+Pool icons prefer the ENS `avatar` record through viem. Until avatar URLs are published, the UI uses the prepared local image matching the resolved token pair. This image fallback contains no ENS names or wallet/pool addresses. The three prepared PNGs are in `public/pool-avatars/`; they have not been published to GitHub and their avatar records have not been set. After hosting them at public HTTPS URLs, add each URL as the corresponding pool's `avatar` in the publication seed and run the publisher. Do not use a localhost URL in an ENS avatar record.
+
+Publication uses an external seed at `~/.config/nameflow/ens-directory-seed.json` (override with `NAMEFLOW_SEED_FILE`). The seed is only an administrative publication input; the frontend never reads it. Set `SEPOLIA_PRIVATE_KEY` locally for publication; never commit the key or expose it through a `VITE_` variable.
+
+```bash
+node scripts/publish-ens-directory.mjs
+node scripts/verify-ens-directory.mjs
+```
+
+The scripts need Node 20 or newer (`import.meta.resolve`). If the ENS directory cannot be read at startup, the dashboard falls back to the built-in list of the same three pools and shows a warning instead of a blank screen.
+
+The publisher skips unchanged records, simulates a resolver multicall, waits for confirmation, and verifies the resulting records. The verifier loads the same ENS directory as the app and checks forward and managed reverse mappings. Managed reverse lookup reads `nameflow:name` at `<address-without-0x>.lookup.nameflow.eth` and accepts it only if forward resolution matches the address. This namespace lookup is separate from an ENS primary reverse name. Standard primary reverse resolution is used as a fallback.
+
+ENS reads are cached for five minutes (one minute for missing records). Reload the page after changing records to read them immediately.
+
+The existing simulator has five wallets. Its main wallet and four derived sub-wallets are listed as Bob identities in the ENS directory. The simulator panel displays the resolved names while retaining addresses for copying. To register wallet names from a local public list (`[{"name":"…","address":"0x…"}]`), use `NAMEFLOW_WALLETS_FILE` with `scripts/register-ens-wallets.mjs` and the namespace owner's local `SEPOLIA_PRIVATE_KEY`. This creates missing subname registries and forward/managed reverse records; it does not generate or fund wallets.
+
+Wallet avatars use the Boring Avatars Bauhaus algorithm with the palette #651366, #a71a5b, #e7204e, #f76e2a, #f0c505. They are generated locally from normalized wallet addresses, remain stable when ENS names change, and do not use an external avatar API or ENS avatar records. Attribution and the upstream MIT license are in licenses/boring-avatars-MIT.txt.

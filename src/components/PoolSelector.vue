@@ -12,9 +12,11 @@
         @click="$emit('select', pool)"
       >
         <div class="flex items-center gap-2 min-w-0">
-          <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: pool.color }" />
+          <img v-if="poolIcon(pool)" :src="poolIcon(pool)" :alt="`${pool.name} icon`" class="w-9 h-9 rounded-full shrink-0" @error="$event.target.hidden = true" />
+          <span v-else class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: pool.color }" />
           <div class="min-w-0">
             <div class="font-medium truncate">{{ pool.name }}</div>
+            <div v-if="pool.ensName" class="text-[10px] text-gray-400 truncate" :title="pool.ensName">{{ pool.ensName }}</div>
             <div class="text-[10px] text-gray-500 font-mono">
               {{ pool.address ? `${pool.fee / 10000}% fee` : 'combined view' }}
             </div>
@@ -27,6 +29,7 @@
 </template>
 
 <script setup>
+import { poolIcon } from '@/utils/poolIcon'
 defineProps({
   pools: { type: Array, required: true },
   activePool: { type: Object, default: null },

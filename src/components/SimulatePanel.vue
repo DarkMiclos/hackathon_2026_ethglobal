@@ -41,7 +41,7 @@
             <div class="flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="w.ready ? 'bg-accent-green' : w.inspected ? 'bg-accent-amber' : 'bg-surface-600'" />
               <span class="text-[10px] text-gray-500 shrink-0">{{ w.index === 0 ? 'main' : `#${w.index + 1}` }}</span>
-              <code class="text-[10px] text-gray-300 truncate flex-1">{{ w.address }}</code>
+              <code class="text-[10px] text-gray-300 truncate flex-1" :title="w.address">{{ identityNames[w.address.toLowerCase()] || w.address }}</code>
               <button class="text-[10px] text-accent-blue hover:text-blue-300 shrink-0" @click="copy(w.address)">copy</button>
             </div>
             <div class="mt-0.5 flex items-center justify-between text-[10px] font-mono text-gray-400">
@@ -103,6 +103,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSimulateSwaps } from '@/composables/useSimulateSwaps'
+import { identityNames } from '@/composables/useEns'
 
 const emit = defineEmits(['executed'])
 
@@ -129,7 +130,7 @@ const checkedAgo = computed(() => {
 const canPrepare = computed(() => !busy.value && wallets.value.some((w) => w.inspected) && mainShortfallEth.value === 0n)
 const canExecute = computed(() => !busy.value && readyWallets.value.length > 0)
 
-const NEED_LABELS = { eth: 'gas', weth: 'wrap', 'approve-weth': 'approve WETH', 'approve-usdc': 'approve USDC', usdc: 'seed USDC' }
+const NEED_LABELS = { eth: 'gas', weth: 'wrap', 'approve-weth': 'approve WETH', 'approve-usdc': 'approve USDC', 'approve-uni': 'approve UNI', usdc: 'seed USDC' }
 function needsLabel(needs) {
   return 'needs ' + needs.map((n) => NEED_LABELS[n] || n).join(', ')
 }

@@ -109,7 +109,7 @@
           :class="highlightedTrader === t.address ? 'text-accent-blue' : 'text-gray-300'"
           @click="$emit('select-trader', t.address)"
         >
-          <span class="font-mono">{{ truncateAddr(t.address) }}</span>
+          <span class="font-mono">{{ t.name || truncateAddr(t.address) }}</span>
           <span class="text-gray-500">{{ t.count }} swaps · {{ formatAmount(t.volume, 0) }} USDC</span>
         </div>
       </div>
@@ -205,7 +205,7 @@ const topTraders = computed(() => {
   const m = new Map()
   for (const s of props.swaps) {
     if (!s.trader) continue
-    const t = m.get(s.trader) || { address: s.trader, count: 0, volume: 0 }
+    const t = m.get(s.trader) || { address: s.trader, name: s.traderName, count: 0, volume: 0 }
     t.count++
     t.volume += s.valueUsdc || 0
     m.set(s.trader, t)

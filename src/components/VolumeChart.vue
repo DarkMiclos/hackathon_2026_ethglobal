@@ -88,15 +88,11 @@ function draw() {
   // sell segment (bottom), buy segment (top)
   bar.append('rect')
     .attr('x', 0).attr('width', x.bandwidth())
-    .attr('y', h).attr('height', 0)
     .attr('fill', SELL).attr('rx', 2)
-    .transition().duration(500)
     .attr('y', (d) => y(d.sell)).attr('height', (d) => h - y(d.sell))
   bar.append('rect')
     .attr('x', 0).attr('width', x.bandwidth())
-    .attr('y', h).attr('height', 0)
     .attr('fill', BUY).attr('rx', 2)
-    .transition().duration(500)
     .attr('y', (d) => y(d.total)).attr('height', (d) => y(d.sell) - y(d.total))
 
   // pool colour strip under each bar

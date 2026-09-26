@@ -1,0 +1,55 @@
+/**
+ * Vercel serverless proxy for MultiBaas.
+ *
+ * The browser calls /api/multibaas/<path> on the same origin; this function forwards the
+ * request to the MultiBaas deployment and injects the API key. That solves CORS on the
+ * deployed site and keeps the key out of the client bundle.
+ *
+ * Environment variables (set in the Vercel project, not prefixed with VITE_):
+ *   MULTIBAAS_URL      https://<deployment>.multibaas.com
+ *   MULTIBAAS_API_KEY  a read-only MultiBaas API key
+ */
+export const config = { runtime: 'edge' }
+
+const ALLOWED_METHODS = new Set(['GET', 'POST', 'OPTIONS'])
+
+export default async function handler(request) {
+  if (!ALLOWED_METHODS.has(request.method)) {
+    return new Response('Method not allowed', { status: 405 })
+  }
+  const base = (process.env.MULTIBAAS_URL || '').replace(/\/+$/, '')
+  const key = process.env.MULTIBAAS_API_KEY || ''
+  if (!base || !key) {
+    return Response.json({ status: 500, message: 'MULTIBAAS_URL / MULTIBAAS_API_KEY are not configured' }, { status: 500 })
+  }
+
+  const incoming = new URL(request.url)
+  const path = incoming.pathname.replace(/^\/api\/multibaas/, '')
+  // Only the read surface the dashboard uses is forwarded. Anything else is refused so a
+  // leaked proxy URL cannot be used to administer the deployment.
+  if (!/^\/api\/v0\/(queries(\/[A-Za-z0-9_-]+\/(results|count))?|chains\/ethereum\/(status|addresses\/[A-Za-z0-9_-]+\/contracts\/[A-Za-z0-9_-]+\/(status|methods\/(slot0|liquidity|token0|token1|fee))))$/.test(path)) {
+    return Response.json({ status: 403, message: 'Path not allowed through the proxy' }, { status: 403 })
+  }
+
+  const upstream = new URL(base + path)
+  upstream.search = incoming.search
+
+  const headers = new Headers()
+  headers.set('Authorization', `Bearer ${key}`)
+  headers.set('Accept', 'application/json')
+  const contentType = request.headers.get('content-type')
+  if (contentType) headers.set('Content-Type', contentType)
+
+  const init = { method: request.method, headers }
+  if (request.method === 'POST') init.body = await request.text()
+
+  const res = await fetch(upstream, init)
+  const body = await res.text()
+  return new Response(body, {
+    status: res.status,
+    headers: {
+      'Content-Type': res.headers.get('content-type') || 'application/json',
+      'Cache-Control': 'no-store',
+    },
+  })
+}

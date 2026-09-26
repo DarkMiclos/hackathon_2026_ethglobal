@@ -49,19 +49,40 @@ const ROUTER_ABI = [
   },
 ]
 
-// One round = three swaps per wallet. Even/odd wallets differ on the third leg so the
-// dashboard shows both buys and sells in the WETH/USDC pool.
+// One round = three swaps per wallet, one per pool. Direction alternates by wallet AND by
+// round so the same wallet trades the other way next time. Across five wallets a round is
+// close to net-neutral for every pool, which keeps the tiny testnet pools from drifting.
 const WETH_SWAP = parseEther('0.001')
-const USDC_SWAP = 5_000_000n // 5 USDC
-const USDC_UNI_SWAP = 500_000n // 0.5 USDC: the USDC/UNI pool is tiny and a 5 USDC swap moved it 150%
-function swapPlan(walletIndex) {
-  return [
-    { tokenIn: WETH, tokenOut: USDC, fee: 3000, amountIn: WETH_SWAP, label: 'WETH→USDC' },
-    { tokenIn: WETH, tokenOut: UNI, fee: 3000, amountIn: WETH_SWAP, label: 'WETH→UNI' },
-    walletIndex % 2 === 0
-      ? { tokenIn: USDC, tokenOut: UNI, fee: 3000, amountIn: USDC_UNI_SWAP, label: 'USDC→UNI' }
-      : { tokenIn: USDC, tokenOut: WETH, fee: 3000, amountIn: USDC_SWAP, label: 'USDC→WETH' },
-  ]
+const USDC_SWAP = 30_000_000n     // 30 USDC, roughly the USDC value of 0.001 WETH on Sepolia
+const UNI_SWAP = parseEther('0.00006') // roughly the UNI received for 0.001 WETH
+const USDC_UNI_SWAP = 500_000n    // 0.5 USDC: the USDC/UNI pool is tiny, keep this leg small
+const UNI_USDC_SWAP = parseEther('0.0000002')
+const ROUND_KEY = 'nameflow.sim.round'
+
+function currentRound() {
+  try { return Number(localStorage.getItem(ROUND_KEY)) || 0 } catch { return 0 }
+}
+function bumpRound() {
+  try { localStorage.setItem(ROUND_KEY, String(currentRound() + 1)) } catch { /* ignore */ }
+}
+
+/** Build a wallet's legs for this round, falling back to the WETH/USDC side when it lacks the other token. */
+function swapPlan(wallet, round) {
+  const forward = (wallet.index + round) % 2 === 0
+  const legs = []
+  // WETH / USDC
+  legs.push(!forward && wallet.usdc >= USDC_SWAP
+    ? { tokenIn: USDC, tokenOut: WETH, fee: 3000, amountIn: USDC_SWAP, label: 'USDC→WETH' }
+    : { tokenIn: WETH, tokenOut: USDC, fee: 3000, amountIn: WETH_SWAP, label: 'WETH→USDC' })
+  // WETH / UNI
+  legs.push(!forward && wallet.uni >= UNI_SWAP && wallet.allowUni >= MIN_ALLOWANCE
+    ? { tokenIn: UNI, tokenOut: WETH, fee: 3000, amountIn: UNI_SWAP, label: 'UNI→WETH' }
+    : { tokenIn: WETH, tokenOut: UNI, fee: 3000, amountIn: WETH_SWAP, label: 'WETH→UNI' })
+  // USDC / UNI
+  legs.push(!forward && wallet.uni >= UNI_USDC_SWAP && wallet.allowUni >= MIN_ALLOWANCE
+    ? { tokenIn: UNI, tokenOut: USDC, fee: 3000, amountIn: UNI_USDC_SWAP, label: 'UNI→USDC' }
+    : { tokenIn: USDC, tokenOut: UNI, fee: 3000, amountIn: USDC_UNI_SWAP, label: 'USDC→UNI' })
+  return legs
 }
 const SWAPS_PER_WALLET = 3
 
@@ -70,7 +91,7 @@ const GAS_RESERVE_ETH = parseEther('0.003')   // enough for a round of swaps on 
 const SUB_WALLET_TARGET_ETH = parseEther('0.02')
 const WETH_NEEDED = WETH_SWAP * 2n            // two WETH legs per round
 const WETH_WRAP_TARGET = parseEther('0.012')  // covers USDC preload + several rounds
-const USDC_NEEDED = USDC_SWAP
+const USDC_NEEDED = USDC_SWAP + USDC_UNI_SWAP
 const USDC_PRELOAD_WETH = parseEther('0.005') // swapped once to seed USDC
 const MIN_ALLOWANCE = parseEther('1')         // treat anything below as "not approved"
 
@@ -157,12 +178,14 @@ export function useSimulateSwaps() {
             { address: USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [a] },
             { address: WETH, abi: ERC20_ABI, functionName: 'allowance', args: [a, SWAP_ROUTER] },
             { address: USDC, abi: ERC20_ABI, functionName: 'allowance', args: [a, SWAP_ROUTER] },
+            { address: UNI, abi: ERC20_ABI, functionName: 'balanceOf', args: [a] },
+            { address: UNI, abi: ERC20_ABI, functionName: 'allowance', args: [a, SWAP_ROUTER] },
           ]),
         }),
       ])
       wallets.value = addrs.map((address, i) => {
-        const r = (k) => tokenReads[i * 4 + k]?.result ?? 0n
-        return describeWallet(i, address, eths[i], r(0), r(1), r(2), r(3))
+        const r = (k) => tokenReads[i * 6 + k]?.result ?? 0n
+        return describeWallet(i, address, eths[i], r(0), r(1), r(2), r(3), r(4), r(5))
       })
       inspectedAt.value = Date.now()
     } catch (err) {
@@ -240,6 +263,11 @@ export function useSimulateSwaps() {
       const hash = await wc.writeContract({ address: USDC, abi: ERC20_ABI, functionName: 'approve', args: [SWAP_ROUTER, MAX_UINT256] })
       await publicClient.waitForTransactionReceipt({ hash })
     }
+    if (needs.has('approve-uni')) {
+      addLog(`${tag}: approving UNI for the router`)
+      const hash = await wc.writeContract({ address: UNI, abi: ERC20_ABI, functionName: 'approve', args: [SWAP_ROUTER, MAX_UINT256] })
+      await publicClient.waitForTransactionReceipt({ hash })
+    }
     if (needs.has('usdc')) {
       addLog(`${tag}: seeding USDC (swap ${fmtEth(USDC_PRELOAD_WETH)} WETH → USDC)`)
       const hash = await wc.writeContract({
@@ -268,7 +296,8 @@ export function useSimulateSwaps() {
         return
       }
       swapsTotal.value = ready.length * SWAPS_PER_WALLET
-      addLog(`Broadcasting ${swapsTotal.value} swaps from ${ready.length} wallet(s)…`)
+      const round = currentRound()
+      addLog(`Round ${round + 1}: broadcasting ${swapsTotal.value} swaps from ${ready.length} wallet(s)…`)
 
       const nonces = await Promise.all(ready.map((w) => publicClient.getTransactionCount({ address: w.address })))
       const jobs = []
@@ -276,7 +305,7 @@ export function useSimulateSwaps() {
         const acc = accounts[w.index]
         const wc = walletClientFor(acc)
         let nonce = nonces[i]
-        for (const cfg of swapPlan(w.index)) {
+        for (const cfg of swapPlan(w, round)) {
           const thisNonce = nonce++
           jobs.push(
             wc.writeContract({
@@ -300,6 +329,7 @@ export function useSimulateSwaps() {
         }
       })
       await Promise.all(jobs)
+      bumpRound()
       addLog(swapsFailed.value ? `${swapsDone.value} confirmed, ${swapsFailed.value} failed` : `All ${swapsDone.value} swaps confirmed`)
       status.value = swapsFailed.value ? 'error' : 'idle'
       await inspectWallets()
@@ -320,19 +350,20 @@ export function useSimulateSwaps() {
 }
 
 function emptyWallet(index, address) {
-  return { index, address, eth: 0n, weth: 0n, usdc: 0n, allowWeth: 0n, allowUsdc: 0n, needs: [], ready: false, inspected: false }
+  return { index, address, eth: 0n, weth: 0n, usdc: 0n, uni: 0n, allowWeth: 0n, allowUsdc: 0n, allowUni: 0n, needs: [], ready: false, inspected: false }
 }
 
-function describeWallet(index, address, eth, weth, usdc, allowWeth, allowUsdc) {
+function describeWallet(index, address, eth, weth, usdc, allowWeth, allowUsdc, uni, allowUni) {
   const needs = []
   if (eth < GAS_RESERVE_ETH) needs.push('eth')
   if (weth < WETH_NEEDED) needs.push('weth')
   if (allowWeth < MIN_ALLOWANCE) needs.push('approve-weth')
   if (allowUsdc < MIN_ALLOWANCE) needs.push('approve-usdc')
+  if (allowUni < MIN_ALLOWANCE) needs.push('approve-uni')
   if (usdc < USDC_NEEDED) needs.push('usdc')
   // seeding USDC costs WETH, so a wallet that needs USDC must also hold WETH for it
   if (needs.includes('usdc') && !needs.includes('weth') && weth < USDC_PRELOAD_WETH + WETH_NEEDED) needs.push('weth')
-  return { index, address, eth, weth, usdc, allowWeth, allowUsdc, needs, ready: needs.length === 0, inspected: true }
+  return { index, address, eth, weth, usdc, uni, allowWeth, allowUsdc, allowUni, needs, ready: needs.length === 0, inspected: true }
 }
 
 function fmtEth(wei, digits = 4) {

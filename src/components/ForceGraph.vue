@@ -19,6 +19,8 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as d3 from 'd3'
+import { walletAvatar } from '@/utils/walletAvatar'
+import { poolIcon } from '@/utils/poolIcon'
 import { formatAmount, truncateAddr } from '@/config/pools'
 
 const props = defineProps({
@@ -49,6 +51,22 @@ let zoom = null
 
 const nodeCache = new Map()     // id -> node object (positions survive re-renders)
 const animatedIds = new Set()   // swap ids that already got a particle
+
+// Node positions survive a page reload within the tab so a refresh mid-demo keeps the layout.
+const POS_KEY = 'nameflow.graph.positions'
+const savedPositions = loadPositions()
+function loadPositions() {
+  try { return JSON.parse(sessionStorage.getItem(POS_KEY) || '{}') } catch { return {} }
+}
+function savePositions() {
+  try {
+    const out = {}
+    for (const [id, n] of nodeCache) {
+      if (Number.isFinite(n.x) && Number.isFinite(n.y)) out[id] = { x: Math.round(n.x), y: Math.round(n.y), dragged: Boolean(n.dragged) }
+    }
+    sessionStorage.setItem(POS_KEY, JSON.stringify(out))
+  } catch { /* storage unavailable: positions simply do not persist */ }
+}
 let hoverId = null
 
 onMounted(() => {
@@ -78,6 +96,7 @@ onUnmounted(() => {
 watch(() => props.swaps, () => updateGraph())
 watch(() => props.activePool, () => updateGraph())
 watch(() => props.highlightedTrader, () => applyEmphasis())
+watch(() => props.newSwapIds, (ids) => { if (!ids.length) animatedIds.clear(); else animateNewSwaps() })
 
 function initGraph() {
   const el = container.value
@@ -120,6 +139,7 @@ function initGraph() {
     .force('center', d3.forceCenter(W / 2, H / 2))
     .force('collision', d3.forceCollide().radius((d) => d.r + 10))
     .alphaDecay(0.04)
+    .on('end', savePositions)
 
   updateGraph()
 }
@@ -148,7 +168,7 @@ function updateGraph() {
       poolMap.set(poolId, { id: poolId, type: 'pool', pool: s.pool, label: s.pool.name, volume: 0, buyVol: 0, sellVol: 0, count: 0 })
     }
     if (!walletMap.has(s.trader)) {
-      walletMap.set(s.trader, { id: s.trader, type: 'wallet', label: truncateAddr(s.trader), volume: 0, count: 0, pools: new Set() })
+      walletMap.set(s.trader, { id: s.trader, type: 'wallet', label: s.traderName || truncateAddr(s.trader), volume: 0, count: 0, pools: new Set() })
     }
     const p = poolMap.get(poolId)
     const t = walletMap.get(s.trader)
@@ -187,13 +207,14 @@ function updateGraph() {
     let node = nodeCache.get(fresh.id)
     const anchor = poolAnchor(i, pools.length)
     if (!node) {
-      node = { ...fresh, x: anchor.x, y: anchor.y }
+      const saved = savedPositions[fresh.id]
+      node = { ...fresh, x: saved?.x ?? anchor.x, y: saved?.y ?? anchor.y, dragged: Boolean(saved?.dragged) }
       nodeCache.set(node.id, node)
       added++
     } else {
       Object.assign(node, fresh)
     }
-    if (!node.dragged) { node.fx = anchor.x; node.fy = anchor.y }
+    if (!node.dragged) { node.fx = anchor.x; node.fy = anchor.y } else { node.fx = node.x; node.fy = node.y }
     node.r = poolRadius(node.volume)
     nodes.push(node)
   })
@@ -202,10 +223,11 @@ function updateGraph() {
     if (!node) {
       // spawn next to the first pool it traded in
       const firstPool = nodeCache.get([...fresh.pools][0])
+      const saved = savedPositions[fresh.id]
       node = {
         ...fresh,
-        x: (firstPool?.x ?? W / 2) + (Math.random() - 0.5) * 80,
-        y: (firstPool?.y ?? H / 2) + (Math.random() - 0.5) * 80,
+        x: saved?.x ?? (firstPool?.x ?? W / 2) + (Math.random() - 0.5) * 80,
+        y: saved?.y ?? (firstPool?.y ?? H / 2) + (Math.random() - 0.5) * 80,
       }
       nodeCache.set(node.id, node)
       added++
@@ -242,6 +264,7 @@ function updateGraph() {
   nodeEnter.append('circle').attr('class', 'main')
   nodeEnter.append('path').attr('class', 'pie-buy')
   nodeEnter.append('path').attr('class', 'pie-sell')
+  nodeEnter.append('image').attr('class', 'pool-icon').attr('preserveAspectRatio', 'xMidYMid slice').attr('pointer-events', 'none')
   nodeEnter.append('text').attr('class', 'label').attr('text-anchor', 'middle').attr('pointer-events', 'none')
   nodeEnter.append('text').attr('class', 'sub').attr('text-anchor', 'middle').attr('pointer-events', 'none')
   nodeEnter.transition().duration(400).attr('opacity', 1)
@@ -266,17 +289,24 @@ function updateGraph() {
   nodeSel.select('.pie-buy')
     .attr('fill', BUY).attr('opacity', 0.75)
     .attr('d', (d) => {
-      if (d.type !== 'pool' || !d.volume) return null
+      if (d.type !== 'pool' || !d.volume || poolIcon(d.pool)) return null
       const r = d.r * 0.72
       return arc({ innerRadius: r * 0.45, outerRadius: r, startAngle: 0, endAngle: (d.buyVol / d.volume) * Math.PI * 2 })
     })
   nodeSel.select('.pie-sell')
     .attr('fill', SELL).attr('opacity', 0.75)
     .attr('d', (d) => {
-      if (d.type !== 'pool' || !d.volume) return null
+      if (d.type !== 'pool' || !d.volume || poolIcon(d.pool)) return null
       const r = d.r * 0.72
       return arc({ innerRadius: r * 0.45, outerRadius: r, startAngle: (d.buyVol / d.volume) * Math.PI * 2, endAngle: Math.PI * 2 })
     })
+
+  nodeSel.select('.pool-icon')
+    .attr('href', d => d.type === 'pool' ? poolIcon(d.pool) : walletAvatar(d.id))
+    .attr('display', d => (d.type === 'pool' ? poolIcon(d.pool) : walletAvatar(d.id)) ? null : 'none')
+    .attr('x', d => -d.r).attr('y', d => -d.r)
+    .attr('width', d => d.r * 2).attr('height', d => d.r * 2)
+    .style('clip-path', 'circle(50%)')
 
   nodeSel.select('.label')
     .text((d) => d.label)
@@ -409,5 +439,6 @@ function dragged(event, d) {
 function dragEnded(event, d) {
   if (!event.active) simulation.alphaTarget(0)
   if (d.type === 'pool') { d.dragged = true } else { d.fx = null; d.fy = null }
+  savePositions()
 }
 </script>
