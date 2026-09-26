@@ -60,10 +60,14 @@ export default async function handler(request) {
     return Response.json({ status: 403, message: 'Origin not allowed through the proxy' }, { status: 403 })
   }
 
-  // Path arrives via the rewrite (?mbpath=api/v0/...) or, if hit directly, from the URL itself.
+  // Through the vercel.json rewrite the function still sees the original pathname and query,
+  // plus two parameters Vercel adds (`mbpath` from the destination and `path` for the
+  // `:path*` segment). Both must be stripped or MultiBaas rejects the request as invalid.
   const mbpath = incoming.searchParams.get('mbpath')
   incoming.searchParams.delete('mbpath')
-  const path = mbpath ? `/${mbpath.replace(/^\/+/, '')}` : incoming.pathname.replace(/^\/api\/multibaas/, '')
+  incoming.searchParams.delete('path')
+  const fromPathname = incoming.pathname.replace(/^\/api\/multibaas/, '')
+  const path = fromPathname && fromPathname !== '/' ? fromPathname : (mbpath ? `/${mbpath.replace(/^\/+/, '')}` : '')
   // Only the read surface the dashboard uses is forwarded. Anything else is refused so a
   // leaked proxy URL cannot be used to administer the deployment.
   if (!/^\/api\/v0\/(queries(\/[A-Za-z0-9_-]+\/(results|count))?|chains\/ethereum\/(status|addresses\/[A-Za-z0-9_-]+\/contracts\/[A-Za-z0-9_-]+\/(status|methods\/(slot0|liquidity|token0|token1|fee))))$/.test(path)) {

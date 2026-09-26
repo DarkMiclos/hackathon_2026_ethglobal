@@ -1,10 +1,6 @@
 {
   "rewrites": [
     {
-      "source": "/api/echo/:path*",
-      "destination": "/api/echo?mbpath=:path*"
-    },
-    {
       "source": "/api/multibaas/:path*",
       "destination": "/api/multibaas?mbpath=:path*"
     },
