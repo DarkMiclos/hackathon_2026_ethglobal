@@ -77,7 +77,7 @@ function draw() {
     .attr('fill', '#64748b').attr('font-size', '8px')
     .text((p) => {
       const n = props.swaps.filter((s) => s.pool?.address === p.address).length
-      return `${n} swap${n === 1 ? '' : 's'}`
+      return `${p.fee / 10000}% fee · ${n} swap${n === 1 ? '' : 's'}`
     })
 
   // time axis

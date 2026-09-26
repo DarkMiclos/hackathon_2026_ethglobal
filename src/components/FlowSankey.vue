@@ -5,7 +5,7 @@
       class="pointer-events-none absolute z-10 hidden rounded-lg bg-surface-900/95 border border-surface-600 px-3 py-2 text-xs text-gray-200 shadow-xl whitespace-nowrap"
     />
     <div class="absolute top-0 left-0 right-0 flex justify-between text-[10px] text-gray-500 pointer-events-none px-1">
-      <span>traders</span><span>pools</span><span>token received</span>
+      <span>traders</span><span>pools · width ∝ √USDC value</span><span>token received</span>
     </div>
     <div v-if="!swaps.length" class="absolute inset-0 flex items-center justify-center text-sm text-gray-500 pointer-events-none">
       Waiting for swaps…
@@ -60,7 +60,8 @@ function draw() {
 
   for (const s of props.swaps) {
     if (!s.pool || !s.trader) continue
-    const v = Math.max(s.valueUsdc || 0, 0.000001)
+    // sqrt scaling: link width grows with value but one whale cannot flatten every other flow
+    const v = Math.sqrt(Math.max(s.valueUsdc || 0, 0.000001))
     const tId = `t:${s.trader}`
     const pId = `p:${s.pool.address}`
     const kId = `k:${s.tokenOut.symbol}`
@@ -77,7 +78,7 @@ function draw() {
     .nodePadding(Math.max(6, Math.min(18, height / (nodeMap.size + 2))))
     .nodeAlign(sankeyJustify)
     .nodeSort((a, b) => b.value - a.value)
-    .extent([[70, 16], [width - 70, height - 6]])({
+    .extent([[Math.min(190, Math.round(width * 0.18)), 16], [width - 70, height - 6]])({
       nodes: [...nodeMap.values()].map((n) => ({ ...n })),
       links: [...linkMap.values()].map((l) => ({ ...l })),
     })
@@ -97,7 +98,7 @@ function draw() {
       const [mx, my] = d3.pointer(event, container.value)
       tip.classed('hidden', false)
         .style('left', `${Math.min(mx + 12, width - 200)}px`).style('top', `${Math.max(my - 30, 0)}px`)
-        .html(`<b>${d.source.label}</b> → <b>${d.target.label}</b><br>${d.count} swaps · ${formatAmount(d.value, 0)} USDC`)
+        .html(`<b>${d.source.label}</b> → <b>${d.target.label}</b><br>${d.count} swaps · ${formatAmount(d.value * d.value, 0)} USDC`)
     })
     .on('mouseleave', function (_, d) {
       d3.select(this).attr('stroke-opacity', focus ? (touchesTrader(d, focus) ? 0.75 : 0.06) : 0.4)
@@ -115,7 +116,7 @@ function draw() {
       const [mx, my] = d3.pointer(event, container.value)
       tip.classed('hidden', false)
         .style('left', `${Math.min(mx + 12, width - 200)}px`).style('top', `${Math.max(my - 30, 0)}px`)
-        .html(`<b>${d.kind === 'trader' ? d.address : d.label}</b><br>${formatAmount(d.value, 0)} USDC through`)
+        .html(`<b>${d.kind === 'trader' ? d.address : d.label}</b><br>${d.kind === 'pool' ? `${d.pool.fee / 10000}% fee · ` : ''}width ∝ √value`)
     })
     .on('mouseleave', () => tip.classed('hidden', true))
 
