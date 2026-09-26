@@ -14,7 +14,7 @@ import { normalize } from 'viem/ens'
 
 const client = createPublicClient({
   chain: sepolia,
-  transport: http(),
+  transport: http(import.meta.env.VITE_SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
   // If ENSv2 requires a custom resolver address on Sepolia, set it here:
   // universalResolverAddress: '0x...',
 })

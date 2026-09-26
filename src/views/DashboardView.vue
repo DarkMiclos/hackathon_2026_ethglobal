@@ -1,113 +1,115 @@
 <template>
-  <main class="p-6 grid grid-cols-12 gap-4 h-[calc(100vh-57px)]">
+  <main class="p-4 grid grid-cols-12 gap-4 h-[calc(100vh-57px)] min-h-0">
 
-    <!-- Left column: Pool selector + Stats + Simulate -->
-    <aside class="col-span-3 flex flex-col gap-4">
+    <!-- Left column: pools, stats, pool detail, simulate -->
+    <aside class="col-span-3 flex flex-col gap-4 min-h-0 overflow-y-auto trade-tape pr-1">
       <PoolSelector
         :pools="pools"
         :active-pool="activePool"
-        @select="activePool = $event"
+        :counts="poolCounts"
+        @select="selectPool"
       />
-      <StatsCard :stats="stats" />
-      <div v-if="isLive" class="flex items-center gap-2 text-xs text-green-400 px-3">
-        <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-        Live — MultiBaas
-      </div>
-      <div v-else class="flex items-center gap-2 text-xs text-yellow-400 px-3">
-        <span class="w-2 h-2 rounded-full bg-yellow-400" />
-        Demo data
-      </div>
-
-      <!-- Simulate Swaps Panel -->
-      <div class="bg-surface-800 rounded-xl p-4">
-        <button
-          v-if="!simPanelOpen"
-          class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-          @click="openSimPanel"
-        >
-          Simulate Swaps
-        </button>
-
-        <div v-else class="space-y-3">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-medium text-gray-300">Simulate Swaps</h3>
-            <button class="text-gray-500 hover:text-gray-300 text-xs" @click="simPanelOpen = false">Close</button>
-          </div>
-
-          <div class="space-y-1">
-            <label class="text-xs text-gray-500">Test Wallet</label>
-            <div class="flex items-center gap-1">
-              <code class="text-xs text-gray-300 bg-surface-900 px-2 py-1 rounded flex-1 truncate">{{ simWalletAddress }}</code>
-              <button
-                class="text-xs text-blue-400 hover:text-blue-300 shrink-0"
-                @click="copyAddress"
-              >Copy</button>
-            </div>
-          </div>
-
-          <div class="flex items-center justify-between text-xs">
-            <span class="text-gray-500">Balance</span>
-            <span class="text-gray-300">{{ simBalance || '...' }} ETH</span>
-          </div>
-
-          <div v-if="!simHasFunds" class="text-xs text-yellow-400 bg-yellow-400/10 rounded p-2">
-            Fund this address with ~0.01 Sepolia ETH from a
-            <a
-              href="https://www.alchemy.com/faucets/ethereum-sepolia"
-              target="_blank"
-              class="underline hover:text-yellow-300"
-            >faucet</a>, then click Refresh.
-          </div>
-
-          <div class="flex gap-2">
-            <button
-              class="flex-1 py-1.5 text-xs bg-surface-700 hover:bg-surface-600 text-gray-300 rounded-lg transition-colors"
-              :disabled="simStatus === 'running'"
-              @click="onRefreshBalance"
-            >
-              Refresh
-            </button>
-            <button
-              class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors"
-              :class="simHasFunds && simStatus !== 'running'
-                ? 'bg-green-600 hover:bg-green-500 text-white'
-                : 'bg-surface-700 text-gray-500 cursor-not-allowed'"
-              :disabled="!simHasFunds || simStatus === 'running'"
-              @click="onExecuteSwaps"
-            >
-              {{ simStatus === 'running' ? `Swapping ${simSwapsDone}/${simSwapsTotal}...` : 'Execute 5 Swaps' }}
-            </button>
-          </div>
-
-          <div v-if="simLogs.length" class="max-h-32 overflow-y-auto space-y-0.5">
-            <div
-              v-for="(entry, i) in simLogs"
-              :key="i"
-              class="text-[10px] font-mono"
-              :class="entry.msg.startsWith('Error') ? 'text-red-400' : 'text-gray-500'"
-            >{{ entry.msg }}</div>
-          </div>
-        </div>
-      </div>
+      <PoolDetail
+        v-if="activePool?.address"
+        :pool="activePool"
+        :state="poolStates[activePool.address]"
+        :aggregate="aggregates[activePool.address]"
+        :swaps="filteredSwaps"
+        :highlighted-trader="highlightedTrader"
+        @select-trader="toggleTrader"
+      />
+      <StatsCard :stats="stats" :swaps="filteredSwaps" />
+      <SimulatePanel @executed="onSwapsExecuted" />
     </aside>
 
-    <!-- Center: D3 visualizations -->
-    <section class="col-span-6 flex flex-col gap-4">
-      <div class="bg-surface-800 rounded-xl p-4 flex-1 viz-container">
-        <h2 class="text-sm font-medium text-gray-400 mb-2">Trader Network</h2>
-        <ForceGraph :swaps="filteredSwaps" />
+    <!-- Center: visualizations -->
+    <section class="col-span-6 flex flex-col gap-4 min-h-0 overflow-hidden">
+      <div class="bg-surface-800 rounded-xl p-4 flex-1 min-h-0 flex flex-col">
+        <div class="flex items-center justify-between mb-2 shrink-0">
+          <div class="flex items-center gap-1 bg-surface-900 rounded-lg p-0.5">
+            <button
+              v-for="v in VIEWS"
+              :key="v.id"
+              class="px-3 py-1 text-xs rounded-md transition-colors"
+              :class="view === v.id ? 'bg-surface-700 text-white' : 'text-gray-500 hover:text-gray-300'"
+              @click="view = v.id"
+            >{{ v.label }}</button>
+          </div>
+          <div class="flex items-center gap-3 text-[10px] text-gray-500">
+            <span v-if="activePool?.address" class="flex items-center gap-1">
+              <span class="w-2 h-2 rounded-full" :style="{ background: activePool.color }" />
+              {{ activePool.name }}
+              <button class="text-accent-blue hover:underline ml-1" @click="selectPool(ALL_POOLS)">show all</button>
+            </span>
+            <span v-if="highlightedTrader" class="flex items-center gap-1 font-mono">
+              {{ truncateAddr(highlightedTrader) }}
+              <button class="text-accent-blue hover:underline ml-1 font-sans" @click="highlightedTrader = ''">clear</button>
+            </span>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 relative">
+          <ForceGraph
+            v-show="view === 'network'"
+            :swaps="filteredSwaps"
+            :pools="POOLS"
+            :active-pool="activePool"
+            :highlighted-trader="highlightedTrader"
+            :new-swap-ids="newSwapIds"
+            class="absolute inset-0"
+            @select-pool="selectPool"
+            @select-trader="toggleTrader"
+          />
+          <FlowSankey
+            v-if="view === 'flow'"
+            :swaps="filteredSwaps"
+            :highlighted-trader="highlightedTrader"
+            class="absolute inset-0"
+            @select-pool="selectPool"
+            @select-trader="toggleTrader"
+          />
+          <SwapTimeline
+            v-if="view === 'timeline'"
+            :swaps="filteredSwaps"
+            :pools="POOLS"
+            :highlighted-trader="highlightedTrader"
+            :new-swap-ids="newSwapIds"
+            class="absolute inset-0"
+            @select-pool="selectPool"
+            @select-trader="toggleTrader"
+          />
+        </div>
       </div>
-      <div class="bg-surface-800 rounded-xl p-4 h-48 viz-container">
-        <h2 class="text-sm font-medium text-gray-400 mb-2">Price</h2>
-        <PriceChart :swaps="filteredSwaps" />
+
+      <div class="grid grid-cols-2 gap-4 h-52 shrink-0">
+        <div class="bg-surface-800 rounded-xl p-3 flex flex-col min-h-0">
+          <h2 class="text-xs font-medium text-gray-400 mb-1 shrink-0">
+            {{ activePool?.address ? `${activePool.name} · ${activePool.quote.symbol} per ${activePool.base.symbol}` : 'Prices' }}
+          </h2>
+          <PriceChart :swaps="allSwaps" :active-pool="activePool" :pool-states="poolStates" class="flex-1 min-h-0" />
+        </div>
+        <div class="bg-surface-800 rounded-xl p-3 flex flex-col min-h-0">
+          <h2 class="text-xs font-medium text-gray-400 mb-1 shrink-0">
+            Volume per pool <span class="text-gray-600">· USDC-valued · click to focus</span>
+          </h2>
+          <VolumeChart :swaps="allSwaps" :pools="POOLS" :active-pool="activePool" class="flex-1 min-h-0" @select-pool="selectPool" />
+        </div>
       </div>
     </section>
 
-    <!-- Right column: Live trade tape -->
-    <aside class="col-span-3 flex flex-col">
-      <div class="bg-surface-800 rounded-xl p-4 flex-1 overflow-hidden flex flex-col">
-        <h2 class="text-sm font-medium text-gray-400 mb-2">Live Swaps</h2>
-        <TradeTape :swaps="filteredSwaps" class="flex-1 overflow-y-auto trade-tape" />
+    <!-- Right column: live trade tape -->
+    <aside class="col-span-3 flex flex-col min-h-0">
+      <div class="bg-surface-800 rounded-xl p-4 flex-1 overflow-hidden flex flex-col min-h-0">
+        <div class="flex items-center justify-between mb-2 shrink-0">
+          <h2 class="text-sm font-medium text-gray-400">Live Swaps</h2>
+          <span class="text-[10px] text-gray-500">{{ filteredSwaps.length }} shown</span>
+        </div>
+        <TradeTape
+          :swaps="filteredSwaps"
+          :new-swap-ids="newSwapIds"
+          :highlighted-trader="highlightedTrader"
+          class="flex-1 overflow-y-auto trade-tape"
+          @select-trader="toggleTrader"
+        />
       </div>
     </aside>
 
@@ -115,86 +117,142 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, toRef } from 'vue'
+import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
 import { useMultiBaas } from '@/composables/useMultiBaas'
-import { useSimulateSwaps } from '@/composables/useSimulateSwaps'
+import { POOLS, ALL_POOLS, enrichSwap, swapValueUsdc, decodePrice, truncateAddr } from '@/config/pools'
 import PoolSelector from '@/components/PoolSelector.vue'
 import StatsCard from '@/components/StatsCard.vue'
+import PoolDetail from '@/components/PoolDetail.vue'
+import SimulatePanel from '@/components/SimulatePanel.vue'
 import ForceGraph from '@/components/ForceGraph.vue'
+import FlowSankey from '@/components/FlowSankey.vue'
+import SwapTimeline from '@/components/SwapTimeline.vue'
 import PriceChart from '@/components/PriceChart.vue'
+import VolumeChart from '@/components/VolumeChart.vue'
 import TradeTape from '@/components/TradeTape.vue'
 
-const { fetchSwaps, isLive, loading, error } = useMultiBaas()
-
-const {
-  walletAddress: simWalletAddress,
-  balance: simBalance,
-  hasFunds: simHasFunds,
-  status: simStatus,
-  logs: simLogs,
-  swapsDone: simSwapsDone,
-  swapsTotal: simSwapsTotal,
-  initWallet,
-  refreshBalance,
-  executeSwaps,
-} = useSimulateSwaps()
-
-const KNOWN_POOLS = [
-  { name: 'WETH / USDC', address: '0x6ce0896eae6d4bd668fde41bb784548fb8f59b50', fee: 3000 },
-  { name: 'WETH / UNI',  address: '0x287b0e934ed0439e2a7b1d5f0fc25ea2c24b64f7', fee: 3000 },
-  { name: 'USDC / UNI',  address: '0x349492f65c8b27efef83456189b85d0fa32afccd', fee: 3000 },
+const VIEWS = [
+  { id: 'network', label: 'Network' },
+  { id: 'flow', label: 'Flow' },
+  { id: 'timeline', label: 'Timeline' },
 ]
 
-const ALL_POOLS = { name: 'All Pools', address: '', fee: 0 }
+const { fetchSwaps, fetchPoolAggregates, fetchPoolState, fetchChainStatus, totalSwaps } = useMultiBaas()
 
-const allSwaps = ref([])
-const pools = ref([ALL_POOLS, ...KNOWN_POOLS])
-const activePool = ref(ALL_POOLS)
-const simPanelOpen = ref(false)
+const rawSwaps = ref([])
+const poolStates = ref({})     // address -> slot0/liquidity/indexing state
+const aggregates = ref({})     // address -> MultiBaas aggregated row
+// Pool metadata stays non-reactive so identity comparisons against enriched swaps keep working.
+const pools = [ALL_POOLS, ...POOLS]
+const activePool = shallowRef(ALL_POOLS)
+const highlightedTrader = ref('')
+const view = ref('network')
+const newSwapIds = ref([])
+
+// Latest ETH price in USDC: slot0 of the WETH/USDC pool, else the last indexed swap there.
+const ethUsdc = computed(() => {
+  const pool = POOLS[0]
+  const live = decodePrice(poolStates.value[pool.address]?.sqrtPriceX96, pool)
+  if (live) return live
+  const last = [...rawSwaps.value].reverse().find((s) => s.contractAddress === pool.address)
+  return last ? decodePrice(last.sqrtPriceX96, pool) || 0 : 0
+})
+
+const allSwaps = computed(() =>
+  rawSwaps.value
+    .map(enrichSwap)
+    .filter((s) => s.pool)
+    .map((s) => ({ ...s, valueUsdc: swapValueUsdc(s, ethUsdc.value) })),
+)
 
 const filteredSwaps = computed(() => {
   if (!activePool.value?.address) return allSwaps.value
-  const target = activePool.value.address.toLowerCase()
-  return allSwaps.value.filter((s) => s.contractAddress === target)
+  return allSwaps.value.filter((s) => s.pool.address === activePool.value.address)
 })
 
-const stats = computed(() => ({
-  swapCount: filteredSwaps.value.length,
-  volume: filteredSwaps.value.reduce((sum, s) => sum + Math.abs(s.amount0), 0),
-  traders: new Set(filteredSwaps.value.map((s) => s.sender)).size,
-}))
+const poolCounts = computed(() => {
+  const counts = { '': allSwaps.value.length }
+  for (const s of allSwaps.value) counts[s.pool.address] = (counts[s.pool.address] || 0) + 1
+  return counts
+})
 
-let pollInterval = null
+const stats = computed(() => {
+  const rows = filteredSwaps.value
+  return {
+    swapCount: rows.length,
+    totalSwaps: activePool.value?.address ? 0 : totalSwaps.value,
+    volumeUsdc: rows.reduce((sum, s) => sum + (s.valueUsdc || 0), 0),
+    traders: new Set(rows.map((s) => s.trader)).size,
+    buys: rows.filter((s) => s.side === 'buy').length,
+    sells: rows.filter((s) => s.side === 'sell').length,
+    lastSwapAt: rows.length ? Math.max(...rows.map((s) => s.timestamp)) : 0,
+    scopeLabel: activePool.value?.address ? activePool.value.name : 'all pools',
+  }
+})
 
-onMounted(() => {
-  loadSwaps()
-  pollInterval = setInterval(loadSwaps, 5000)
+function selectPool(pool) {
+  activePool.value = pool?.address === activePool.value?.address ? ALL_POOLS : (pool || ALL_POOLS)
+}
+
+function toggleTrader(addr) {
+  highlightedTrader.value = addr && addr !== highlightedTrader.value ? addr : ''
+}
+
+// ---- polling -------------------------------------------------------------
+
+const SWAP_POLL_MS = 8000
+const STATE_POLL_MS = 30000
+let swapTimer = null
+let stateTimer = null
+let seenIds = new Set()
+let firstLoad = true
+
+async function loadSwaps() {
+  const next = await fetchSwaps({ limit: 200 })
+  const fresh = firstLoad ? [] : next.filter((s) => !seenIds.has(s.id)).map((s) => s.id)
+  seenIds = new Set(next.map((s) => s.id))
+  firstLoad = false
+  newSwapIds.value = fresh
+  rawSwaps.value = next
+  if (fresh.length) {
+    // refresh live pool state right away so the price line follows the new swaps
+    loadPoolStates()
+    setTimeout(() => { newSwapIds.value = [] }, 4000)
+  }
+}
+
+async function loadPoolStates() {
+  const [aggs, ...states] = await Promise.all([
+    fetchPoolAggregates(),
+    ...POOLS.map((p) => fetchPoolState(p)),
+  ])
+  aggregates.value = aggs || {}
+  const next = { ...poolStates.value }
+  POOLS.forEach((p, i) => { if (states[i]) next[p.address] = states[i] })
+  poolStates.value = next
+  fetchChainStatus()
+}
+
+function startPolling(swapMs = SWAP_POLL_MS) {
+  clearInterval(swapTimer)
+  swapTimer = setInterval(loadSwaps, swapMs)
+}
+
+onMounted(async () => {
+  await Promise.all([loadSwaps(), loadPoolStates()])
+  startPolling()
+  stateTimer = setInterval(loadPoolStates, STATE_POLL_MS)
 })
 
 onUnmounted(() => {
-  if (pollInterval) clearInterval(pollInterval)
+  clearInterval(swapTimer)
+  clearInterval(stateTimer)
 })
 
-async function loadSwaps() {
-  const data = await fetchSwaps()
-  allSwaps.value = data
-}
-
-function openSimPanel() {
-  initWallet()
-  refreshBalance()
-  simPanelOpen.value = true
-}
-
-async function onRefreshBalance() {
-  await refreshBalance()
-}
-
-async function onExecuteSwaps() {
-  await executeSwaps(5)
-}
-
-function copyAddress() {
-  navigator.clipboard?.writeText(simWalletAddress.value)
+/** After the simulator broadcasts swaps, poll fast for a minute so they animate in as MultiBaas indexes them. */
+function onSwapsExecuted() {
+  loadSwaps()
+  startPolling(3000)
+  setTimeout(() => startPolling(SWAP_POLL_MS), 60000)
 }
 </script>
