@@ -48,6 +48,7 @@ let H = 0
 let nodeSel = null
 let linkSel = null
 let zoom = null
+let userZoomed = false
 
 const nodeCache = new Map()     // id -> node object (positions survive re-renders)
 const animatedIds = new Set()   // swap ids that already got a particle
@@ -80,6 +81,7 @@ onMounted(() => {
     H = height
     if (!svg) initGraph()
     else if (sizeChanged) {
+      userZoomed = false
       svg.attr('viewBox', `0 0 ${W} ${H}`)
       simulation.force('center', d3.forceCenter(W / 2, H / 2))
       updateGraph()
@@ -127,7 +129,10 @@ function initGraph() {
   root.append('g').attr('class', 'particles')
   root.append('g').attr('class', 'nodes')
 
-  zoom = d3.zoom().scaleExtent([0.4, 3]).on('zoom', (event) => root.attr('transform', event.transform))
+  zoom = d3.zoom().scaleExtent([0.4, 3]).on('zoom', (event) => {
+    root.attr('transform', event.transform)
+    if (event.sourceEvent) userZoomed = true // wheel/drag by the user: stop auto-fitting
+  })
   svg.call(zoom).on('dblclick.zoom', null)
   svg.on('click', (event) => {
     if (event.target === svg.node()) emit('select-trader', '')
@@ -139,7 +144,7 @@ function initGraph() {
     .force('center', d3.forceCenter(W / 2, H / 2))
     .force('collision', d3.forceCollide().radius((d) => d.r + 10))
     .alphaDecay(0.04)
-    .on('end', savePositions)
+    .on('end', () => { savePositions(); fitToView() })
 
   updateGraph()
 }
@@ -337,6 +342,21 @@ function updateGraph() {
 
   applyEmphasis()
   animateNewSwaps()
+}
+
+/** Zoom so the settled graph fills the panel (larger panels, e.g. full view, get a larger graph). */
+function fitToView() {
+  if (userZoomed || !simulation || !zoom || !W || !H) return
+  const nodes = simulation.nodes()
+  if (nodes.length < 2) return
+  const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y)
+  const pad = 70
+  const bw = Math.max(d3.max(xs) - d3.min(xs), 1) + pad * 2
+  const bh = Math.max(d3.max(ys) - d3.min(ys), 1) + pad * 2
+  const scale = Math.max(0.5, Math.min(2.2, Math.min(W / bw, H / bh)))
+  const cx = (d3.max(xs) + d3.min(xs)) / 2, cy = (d3.max(ys) + d3.min(ys)) / 2
+  const t = d3.zoomIdentity.translate(W / 2 - cx * scale, H / 2 - cy * scale).scale(scale)
+  svg.transition().duration(600).call(zoom.transform, t)
 }
 
 function ticked() {

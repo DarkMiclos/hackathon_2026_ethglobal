@@ -91,6 +91,7 @@ const swaps = ref([])              // parsed rows, oldest first, at most MAX_ROW
 const lastFetchedAt = ref(null)
 const apiCalls = ref(0)            // MultiBaas requests made this session
 let indexedCount = -1              // how many rows of the saved query we have accounted for
+let syncFailures = 0               // consecutive failures; the header only goes red after two
 let demoLoaded = false
 
 function tracked(promise) {
@@ -116,6 +117,7 @@ export function useMultiBaas() {
       const countRes = await tracked(eventQueries.countEventQueryRecords('swap_events'))
       const count = Number(countRes.data.result) || 0
       isLive.value = true
+      syncFailures = 0
       lastFetchedAt.value = Date.now()
       totalSwaps.value = count
 
@@ -141,7 +143,8 @@ export function useMultiBaas() {
     } catch (err) {
       console.error('MultiBaas sync failed:', err)
       error.value = err?.response?.data?.message || err.message
-      isLive.value = false
+      syncFailures++
+      if (syncFailures >= 2 || !swaps.value.length) isLive.value = false
       if (!swaps.value.length && !demoLoaded) { swaps.value = getDummySwaps(); demoLoaded = true }
       throw err
     } finally {

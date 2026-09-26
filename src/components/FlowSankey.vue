@@ -78,7 +78,7 @@ function draw() {
     .nodePadding(Math.max(6, Math.min(18, height / (nodeMap.size + 2))))
     .nodeAlign(sankeyJustify)
     .nodeSort((a, b) => b.value - a.value)
-    .extent([[Math.min(190, Math.round(width * 0.18)), 16], [width - 70, height - 6]])({
+    .extent([[Math.min(190, Math.round(width * 0.18)), 34], [width - 70, height - 6]])({
       nodes: [...nodeMap.values()].map((n) => ({ ...n })),
       links: [...linkMap.values()].map((l) => ({ ...l })),
     })
