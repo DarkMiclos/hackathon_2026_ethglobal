@@ -253,14 +253,16 @@ const ensLoading = ref(true)
 const ensError = ref('')
 const activePool = shallowRef(ALL_POOLS)
 const highlightedTrader = ref('')
-const view = ref('network')
+// Shareable links: ?view=network|flow|timeline&expanded=1&window=15m|1h|24h|all&pool=<address|label>
+const urlParams = new URLSearchParams(window.location.search)
+const view = ref(['network', 'flow', 'timeline'].includes(urlParams.get('view')) ? urlParams.get('view') : 'network')
 const newSwapIds = ref([])
 const addPoolOpen = ref(false)
 
 // ---- UI preferences (per browser) --------------------------------------------------------
 
-const expanded = ref(false) // full-view presentation mode, intentionally not persisted
-const timeWindow = ref(readPref('nameflow.timeWindow') || 'all')
+const expanded = ref(urlParams.get('expanded') === '1') // full-view presentation mode, not persisted
+const timeWindow = ref(['15m', '1h', '24h', 'all'].includes(urlParams.get('window')) ? urlParams.get('window') : (readPref('nameflow.timeWindow') || 'all'))
 function readPref(key) { try { return localStorage.getItem(key) } catch { return null } }
 function writePref(key, value) { try { localStorage.setItem(key, value) } catch { /* ignore */ } }
 function toggleExpanded() { expanded.value = !expanded.value }
@@ -549,6 +551,14 @@ onUnmounted(() => {
   clearTimeout(clearNewTimer)
   window.removeEventListener('keydown', onKey)
 })
+
+// ?pool=<address or subname label> selects a pool once the watchlist is loaded.
+const wantedPool = (urlParams.get('pool') || '').toLowerCase()
+watch(() => POOLS.length, () => {
+  if (!wantedPool || activePool.value.address) return
+  const match = POOLS.find((p) => p.address === wantedPool || (p.ensName || '').split('.')[0] === wantedPool || (p.alias || '') === wantedPool)
+  if (match) activePool.value = match
+}, { immediate: true })
 
 // A pool filter that no longer exists (directory reloaded) falls back to the combined view.
 watch(() => POOLS.length, () => {
